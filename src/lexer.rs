@@ -9,8 +9,12 @@ pub enum Token<'a> {
     CloseParen,
     OpenSquirrely,
     CloseSquirrely,
+    OpenBracket,
+    CloseBracket,
     Colon,
     Semicolon,
+    Comma,
+    Star,
     Identifier(&'a str),
     StringLiteral(&'a str),
     Number(&'a str),
@@ -52,7 +56,7 @@ impl<'a> Iterator for Lexer<'a> {
         let (i, ch) = self.chars.next()?;
         match ch {
             '"' => {
-                let is_not_closing_quote = |(i, ch)| return ch != '"';
+                let is_not_closing_quote = |(_, ch)| return ch != '"';
                 let literal = &self.chomp(i, is_not_closing_quote)?[1..];
                 self.chars.next(); // throw away closing quote
                 Some(Token::StringLiteral(literal))
@@ -83,8 +87,12 @@ impl<'a> Iterator for Lexer<'a> {
             ')' => Some(Token::CloseParen),
             '{' => Some(Token::OpenSquirrely),
             '}' => Some(Token::CloseSquirrely),
+            '[' => Some(Token::OpenBracket),
+            ']' => Some(Token::CloseBracket),
             ';' => Some(Token::Semicolon),
             ':' => Some(Token::Colon),
+            ',' => Some(Token::Comma),
+            '*' => Some(Token::Star),
             ' ' | '\t' | '\n' => self.next(), // ignore whitespace and try to parse the next token
             _ => panic!("Unknown Character: '{ch}'"),
         }

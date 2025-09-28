@@ -1,16 +1,71 @@
 use crate::lexer::{Lexer, Token};
 
-fn parse<'a>(tokens: Vec<Token>) -> Vec<Ast<'a>> {
-    todo!()
+fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
+    let mut asts = vec![];
+    let mut tokens = source_tokens.into_iter();
+    while let Some(token) = tokens.next() {
+        match token {
+            Token::Use => {
+                if let Some(Token::Identifier(id)) = tokens.next() && Some(Token::Semicolon) == tokens.next() {
+                    asts.push(Ast::Use(id));
+                } else {
+                    panic!("identifier not found after use")
+                }
+            }
+            Token::Fn => {
+                let identifier = if let Some(Token::Identifier(id)) = tokens.next() {
+                    id
+                } else {
+                    panic!("Expected identifier")
+                };
+                println!("Fn ID {identifier}");
+                if tokens.next() != Some(Token::OpenParen) {
+                    panic!("Expected args")
+                }
+                let mut args_tokens = vec![];
+                while let Some(t) = tokens.next() && t != Token::CloseParen {
+                    args_tokens.push(t);
+                }
+                let args = Arg::parse_args(&args_tokens);
+                println!("Fn args {:?}", args);
+                if let Some(t) = tokens.next() && t != Token::Colon {
+                    panic!("Expected type")
+                }
+                let mut type_tokens = vec![];
+                while let Some(t) = tokens.next() && t != Token::OpenSquirrely {
+                    type_tokens.push(t);
+                }
+                let return_type = Type::parse(&type_tokens);
+                let block_tokens = collect_block(&mut tokens);
+                let block = parse(block_tokens);
+                asts.push(Ast::FuncDef { identifier, args, return_type, block });
+            }
+            _ => {},
+        }
+    }
+    return asts;
+}
+
+fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a>> {
+    let mut brackets = 0;
+    let mut tokens = vec![];
+    while let Some(token) = iter.next() {
+        match token {
+            Token::OpenBracket => {brackets += 1},
+            Token::CloseBracket => { if brackets == 0 {break} else {brackets -= 1}},
+            _ => tokens.push(token),
+        }
+    }
+    return tokens
 }
 
 #[derive(Debug, PartialEq)]
 enum Ast<'a> {
     Use(&'a str),
     FuncDef {
-        name: &'a str,
+        identifier: &'a str,
         args: Vec<Arg<'a>>,
-        return_type: &'a str,
+        return_type: Type<'a>,
         block: Vec<Ast<'a>>,
     },
     Return(Expression<'a>),
@@ -48,7 +103,63 @@ struct Assignment<'a> {
 #[derive(Debug, PartialEq)]
 struct Arg<'a> {
     identifier: &'a str,
-    type_: &'a str,
+    type_: Type<'a>,
+}
+
+impl<'a> Arg<'a> {
+    fn parse_args(tokens: &[Token<'a>]) -> Vec<Self> {
+        if tokens.len() == 0 {
+            return vec![]
+        }
+        
+        let mut args = vec![];
+        for pair in tokens.split(|t| t == &Token::Comma) {
+            args.push(Self::parse_pair(pair));
+        }
+        args
+    }
+    
+    fn parse_pair(tokens: &[Token<'a>]) -> Self {
+        let mut parts = tokens.split(|t| *t == Token::Colon);
+        let identifier = if let Some([Token::Identifier(id)]) = parts.next() {
+            id
+        } else {
+            panic!()
+        };
+
+        let type_ = Type::parse(parts.next().expect("expected type"));
+        if parts.next().is_some() {
+            panic!("failed to parse arg")
+        }
+        Self {
+            identifier,
+            type_,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Type<'a> {
+    Identifier(&'a str),
+    Pointer(&'a str),
+    Array(&'a str),
+}
+
+impl<'a> Type<'a> {
+    fn parse(tokens: &[Token<'a>]) -> Self {
+        match tokens {
+            &[Token::Identifier(id)] => {
+                Self::Identifier(id)
+            },
+            &[Token::Star, Token::Identifier(id)] => {
+                Self::Pointer(id)
+            },
+            &[Token::OpenBracket, Token::CloseBracket, Token::Identifier(id)] => {
+                Self::Array(id)
+            },
+            _ => panic!("unknown type")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -61,10 +172,12 @@ mod Tests {
             Token::Use,
             Token::Identifier("std.io"),
             Token::Semicolon,
-            Token::Identifier("i32"),
+            Token::Fn,
             Token::Identifier("main"),
             Token::OpenParen,
             Token::CloseParen,
+            Token::Colon,
+            Token::Identifier("i32"),
             Token::OpenSquirrely,
             Token::Identifier("io.println"),
             Token::OpenParen,
@@ -79,9 +192,9 @@ mod Tests {
         let expected = vec![
             Ast::Use("std.io"),
             Ast::FuncDef {
-                name: "main",
+                identifier: "main",
                 args: vec![],
-                return_type: "i32",
+                return_type: Type::Identifier("i32"),
                 block: vec![
                     Ast::Expression(Expression::FuncCall {
                         identifier: "io.println",
