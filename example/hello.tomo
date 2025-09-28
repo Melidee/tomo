@@ -4,3 +4,6 @@ fn main(): i32 {
     io.println("Hello, world!");  
     return 0;
 }
+
+
+type hello i32

@@ -2,15 +2,27 @@ use crate::lexer::{Lexer, Token};
 
 fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
     let mut asts = vec![];
-    let mut tokens = source_tokens.into_iter();
+    let mut tokens = source_tokens.into_iter().peekable();
     while let Some(token) = tokens.next() {
         match token {
             Token::Use => {
-                if let Some(Token::Identifier(id)) = tokens.next() && Some(Token::Semicolon) == tokens.next() {
+                if let Some(Token::Identifier(id)) = tokens.next()
+                    && Some(Token::Semicolon) == tokens.next()
+                {
                     asts.push(Ast::Use(id));
                 } else {
                     panic!("identifier not found after use")
                 }
+            }
+            Token::Return => {
+                let mut expr = vec![];
+                while let Some(token) = tokens.next()
+                    && token != Token::Semicolon
+                {
+                    expr.push(token);
+                }
+                let expression = Expression::parse(expr);
+                asts.push(Ast::Return(expression));
             }
             Token::Fn => {
                 let identifier = if let Some(Token::Identifier(id)) = tokens.next() {
@@ -18,29 +30,50 @@ fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 } else {
                     panic!("Expected identifier")
                 };
-                println!("Fn ID {identifier}");
                 if tokens.next() != Some(Token::OpenParen) {
                     panic!("Expected args")
                 }
                 let mut args_tokens = vec![];
-                while let Some(t) = tokens.next() && t != Token::CloseParen {
+                while let Some(t) = tokens.next()
+                    && t != Token::CloseParen
+                {
                     args_tokens.push(t);
                 }
                 let args = Arg::parse_args(&args_tokens);
-                println!("Fn args {:?}", args);
-                if let Some(t) = tokens.next() && t != Token::Colon {
+                if let Some(t) = tokens.next()
+                    && t != Token::Colon
+                {
                     panic!("Expected type")
                 }
                 let mut type_tokens = vec![];
-                while let Some(t) = tokens.next() && t != Token::OpenSquirrely {
+                while let Some(t) = tokens.next()
+                    && t != Token::OpenSquirrely
+                {
                     type_tokens.push(t);
                 }
                 let return_type = Type::parse(&type_tokens);
                 let block_tokens = collect_block(&mut tokens);
                 let block = parse(block_tokens);
-                asts.push(Ast::FuncDef { identifier, args, return_type, block });
+                asts.push(Ast::FuncDef {
+                    identifier,
+                    args,
+                    return_type,
+                    block,
+                });
             }
-            _ => {},
+            Token::Identifier(id) if tokens.peek() == Some(&Token::OpenParen) => {
+                let mut args_tokens = vec![Token::Identifier(id)];
+                while let Some(token) = tokens.next()
+                    && token != Token::CloseParen
+                {
+                    args_tokens.push(token);
+                }
+                args_tokens.push(Token::CloseParen);
+                println!("{:?}", args_tokens);
+                let func_call = Expression::parse(args_tokens);
+                asts.push(Ast::Expression(func_call));
+            }
+            _ => {}
         }
     }
     return asts;
@@ -51,12 +84,18 @@ fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a
     let mut tokens = vec![];
     while let Some(token) = iter.next() {
         match token {
-            Token::OpenBracket => {brackets += 1},
-            Token::CloseBracket => { if brackets == 0 {break} else {brackets -= 1}},
+            Token::OpenBracket => brackets += 1,
+            Token::CloseBracket => {
+                if brackets == 0 {
+                    break;
+                } else {
+                    brackets -= 1
+                }
+            }
             _ => tokens.push(token),
         }
     }
-    return tokens
+    return tokens;
 }
 
 #[derive(Debug, PartialEq)]
@@ -80,12 +119,50 @@ enum Ast<'a> {
 
 #[derive(Debug, PartialEq)]
 enum Expression<'a> {
+    Identifier(&'a str),
     FuncCall {
         identifier: &'a str,
         args: Vec<Expression<'a>>,
     },
     StringLiteral(&'a str),
     NumberLiteral(&'a str),
+}
+
+impl<'a> Expression<'a> {
+    fn parse(tokens: Vec<Token<'a>>) -> Self {
+        match tokens[0] {
+            Token::Identifier(id) if tokens.get(1) == Some(&Token::OpenParen) => {
+                let mut args_tokens: Vec<Vec<Token<'_>>> = vec![];
+                for token in tokens.into_iter().skip(2) {
+                    if token == Token::CloseParen {
+                        break;
+                    } else if token == Token::Comma {
+                        args_tokens.push(vec![]);
+                    } else {
+                        if args_tokens.is_empty() {
+                            args_tokens.push(vec![]);
+                        }
+                        let idx = args_tokens.len() - 1;
+                        args_tokens[idx].push(token);
+                    }
+                }
+                println!("{:?}", args_tokens);
+                let args = args_tokens
+                    .into_iter()
+                    .map(|arg_tokens| Expression::parse(arg_tokens))
+                    .collect();
+                
+                Self::FuncCall {
+                    identifier: id,
+                    args,
+                }
+            }
+            Token::Identifier(id) => Expression::Identifier(id),
+            Token::StringLiteral(lit) => Expression::StringLiteral(lit),
+            Token::Number(num) => Expression::NumberLiteral(num),
+            _ => panic!("not an expr {:?}", tokens),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -109,16 +186,16 @@ struct Arg<'a> {
 impl<'a> Arg<'a> {
     fn parse_args(tokens: &[Token<'a>]) -> Vec<Self> {
         if tokens.len() == 0 {
-            return vec![]
+            return vec![];
         }
-        
+
         let mut args = vec![];
         for pair in tokens.split(|t| t == &Token::Comma) {
             args.push(Self::parse_pair(pair));
         }
         args
     }
-    
+
     fn parse_pair(tokens: &[Token<'a>]) -> Self {
         let mut parts = tokens.split(|t| *t == Token::Colon);
         let identifier = if let Some([Token::Identifier(id)]) = parts.next() {
@@ -131,10 +208,7 @@ impl<'a> Arg<'a> {
         if parts.next().is_some() {
             panic!("failed to parse arg")
         }
-        Self {
-            identifier,
-            type_,
-        }
+        Self { identifier, type_ }
     }
 }
 
@@ -148,16 +222,14 @@ enum Type<'a> {
 impl<'a> Type<'a> {
     fn parse(tokens: &[Token<'a>]) -> Self {
         match tokens {
-            &[Token::Identifier(id)] => {
-                Self::Identifier(id)
-            },
-            &[Token::Star, Token::Identifier(id)] => {
-                Self::Pointer(id)
-            },
-            &[Token::OpenBracket, Token::CloseBracket, Token::Identifier(id)] => {
-                Self::Array(id)
-            },
-            _ => panic!("unknown type")
+            &[Token::Identifier(id)] => Self::Identifier(id),
+            &[Token::Star, Token::Identifier(id)] => Self::Pointer(id),
+            &[
+                Token::OpenBracket,
+                Token::CloseBracket,
+                Token::Identifier(id),
+            ] => Self::Array(id),
+            _ => panic!("unknown type"),
         }
     }
 }
@@ -198,7 +270,7 @@ mod Tests {
                 block: vec![
                     Ast::Expression(Expression::FuncCall {
                         identifier: "io.println",
-                        args: vec![Expression::StringLiteral("Hello, World!")],
+                        args: vec![Expression::StringLiteral("Hello, world!")],
                     }),
                     Ast::Return(Expression::NumberLiteral("0")),
                 ],
