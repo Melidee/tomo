@@ -1,6 +1,6 @@
 use crate::lexer::{Lexer, Token};
 
-fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
+pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
     let mut asts = vec![];
     let mut tokens = source_tokens.into_iter().peekable();
     while let Some(token) = tokens.next() {
@@ -69,7 +69,6 @@ fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                     args_tokens.push(token);
                 }
                 args_tokens.push(Token::CloseParen);
-                println!("{:?}", args_tokens);
                 let func_call = Expression::parse(args_tokens);
                 asts.push(Ast::Expression(func_call));
             }
@@ -99,7 +98,7 @@ fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a
 }
 
 #[derive(Debug, PartialEq)]
-enum Ast<'a> {
+pub enum Ast<'a> {
     Use(&'a str),
     FuncDef {
         identifier: &'a str,
@@ -146,7 +145,6 @@ impl<'a> Expression<'a> {
                         args_tokens[idx].push(token);
                     }
                 }
-                println!("{:?}", args_tokens);
                 let args = args_tokens
                     .into_iter()
                     .map(|arg_tokens| Expression::parse(arg_tokens))

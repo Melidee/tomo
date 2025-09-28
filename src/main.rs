@@ -1,10 +1,9 @@
 use std::{env, fs::read_to_string};
 
-use crate::lexer::{Lexer, Token};
+use crate::{lexer::{Lexer, Token}, parser::parse};
 
 mod lexer;
 mod parser;
-mod qbe;
 
 fn main() {
     let source_file = env::args()
@@ -12,5 +11,6 @@ fn main() {
         .expect("Provide a source file ex: tomoc hello.tomo");
     let source = read_to_string(source_file).expect("Failed to read source file");
     let tokens = Lexer::new(&source).collect::<Vec<Token>>();
-    println!("{:?}", tokens);
+    let ast = parse(tokens);
+    println!("{:?}", ast);
 }
