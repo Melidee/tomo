@@ -2,9 +2,11 @@ use std::{iter::Peekable, str::CharIndices};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
+    Module,
     Use,
     Fn,
     Return,
+    Const,
     OpenParen,
     CloseParen,
     OpenSquirrely,
@@ -15,6 +17,7 @@ pub enum Token<'a> {
     Semicolon,
     Comma,
     Star,
+    Equal,
     Identifier(&'a str),
     StringLiteral(&'a str),
     Number(&'a str),
@@ -61,6 +64,10 @@ impl<'a> Iterator for Lexer<'a> {
                 self.chars.next(); // throw away closing quote
                 Some(Token::StringLiteral(literal))
             }
+            '/' if matches!(self.chars.peek(), Some((_, '/')))  => {
+                self.chomp(i, |(_, ch)| ch != '\n' );
+                self.next()
+            }
             'a'..='z' | 'A'..='Z' | '.' | '_' => {
                 let is_id_char = |(_, c)| {
                     ('a'..='z').contains(&c)
@@ -71,9 +78,11 @@ impl<'a> Iterator for Lexer<'a> {
                 };
                 let identifier = self.chomp(i, is_id_char)?;
                 let token = match identifier {
+                    "module" => Token::Module,
                     "use" => Token::Use,
-                    "return" => Token::Return,
                     "fn" => Token::Fn,
+                    "return" => Token::Return,
+                    "const" => Token::Const,
                     id => Token::Identifier(id),
                 };
                 Some(token)
@@ -93,6 +102,7 @@ impl<'a> Iterator for Lexer<'a> {
             ':' => Some(Token::Colon),
             ',' => Some(Token::Comma),
             '*' => Some(Token::Star),
+            '=' => Some(Token::Equal),
             ' ' | '\t' | '\n' => self.next(), // ignore whitespace and try to parse the next token
             _ => panic!("Unknown Character: '{ch}'"),
         }
@@ -103,8 +113,347 @@ impl<'a> Iterator for Lexer<'a> {
 mod tests {
     use crate::lexer::{Lexer, Token};
 
+    // ===== Keywords =====
     #[test]
-    fn parse_hello_world() {
+    fn test_all_keywords() {
+        let source = "module use fn return const";
+        let expected = vec![
+            Token::Module,
+            Token::Use,
+            Token::Fn,
+            Token::Return,
+            Token::Const,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_keywords_no_whitespace() {
+        let source = "module(use)fn";
+        let expected = vec![
+            Token::Module,
+            Token::OpenParen,
+            Token::Use,
+            Token::CloseParen,
+            Token::Fn,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Identifiers =====
+    #[test]
+    fn test_simple_identifier() {
+        let source = "hello world foo bar";
+        let expected = vec![
+            Token::Identifier("hello"),
+            Token::Identifier("world"),
+            Token::Identifier("foo"),
+            Token::Identifier("bar"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_identifier_with_underscore() {
+        let source = "_foo foo_bar my_var_123";
+        let expected = vec![
+            Token::Identifier("_foo"),
+            Token::Identifier("foo_bar"),
+            Token::Identifier("my_var_123"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_identifier_with_dots() {
+        let source = "std.io std.collections.Vec module.submodule.func";
+        let expected = vec![
+            Token::Identifier("std.io"),
+            Token::Identifier("std.collections.Vec"),
+            Token::Identifier("module.submodule.func"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_identifier_mixed_case() {
+        let source = "MyClass someFunc CONSTANT";
+        let expected = vec![
+            Token::Identifier("MyClass"),
+            Token::Identifier("someFunc"),
+            Token::Identifier("CONSTANT"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Numbers =====
+    #[test]
+    fn test_integer() {
+        let source = "0 42 123456";
+        let expected = vec![
+            Token::Number("0"),
+            Token::Number("42"),
+            Token::Number("123456"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_float() {
+        let source = "3.14 0.5 123.456";
+        let expected = vec![
+            Token::Number("3.14"),
+            Token::Number("0.5"),
+            Token::Number("123.456"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== String Literals =====
+    #[test]
+    fn test_empty_string() {
+        let source = r#""""#;
+        let expected = vec![Token::StringLiteral("")];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_string_with_spaces() {
+        let source = r#""Hello, world!""#;
+        let expected = vec![Token::StringLiteral("Hello, world!")];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_multiple_strings() {
+        let source = r#""first" "second" "third""#;
+        let expected = vec![
+            Token::StringLiteral("first"),
+            Token::StringLiteral("second"),
+            Token::StringLiteral("third"),
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_string_with_special_chars() {
+        let source = r#""123!@#$%^&*()_+-=[]{}|;:,.<>?""#;
+        let expected =
+            vec![Token::StringLiteral("123!@#$%^&*()_+-=[]{}|;:,.<>?")];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Punctuation =====
+    #[test]
+    fn test_parentheses() {
+        let source = "())(()";
+        let expected = vec![
+            Token::OpenParen,
+            Token::CloseParen,
+            Token::CloseParen,
+            Token::OpenParen,
+            Token::OpenParen,
+            Token::CloseParen,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_braces() {
+        let source = "{}}{{}";
+        let expected = vec![
+            Token::OpenSquirrely,
+            Token::CloseSquirrely,
+            Token::CloseSquirrely,
+            Token::OpenSquirrely,
+            Token::OpenSquirrely,
+            Token::CloseSquirrely,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_brackets() {
+        let source = "[][[]]";
+        let expected = vec![
+            Token::OpenBracket,
+            Token::CloseBracket,
+            Token::OpenBracket,
+            Token::OpenBracket,
+            Token::CloseBracket,
+            Token::CloseBracket,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_all_punctuation() {
+        let source = "(){}[];:,*";
+        let expected = vec![
+            Token::OpenParen,
+            Token::CloseParen,
+            Token::OpenSquirrely,
+            Token::CloseSquirrely,
+            Token::OpenBracket,
+            Token::CloseBracket,
+            Token::Semicolon,
+            Token::Colon,
+            Token::Comma,
+            Token::Star,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Comments =====
+    #[test]
+    fn test_single_line_comment() {
+        let source = "// this is a comment\nfn";
+        let expected = vec![Token::Fn];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_comment_at_end() {
+        let source = "fn // comment";
+        let expected = vec![Token::Fn];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_multiple_comments() {
+        let source = "// comment 1\nfn // comment 2\n// comment 3\nuse";
+        let expected = vec![Token::Fn, Token::Use];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_comment_with_code_like_content() {
+        let source = "// fn use return const\nmodule";
+        let expected = vec![Token::Module];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Whitespace =====
+    #[test]
+    fn test_whitespace_handling() {
+        let source = "  fn   \t  use  \n  return  ";
+        let expected = vec![Token::Fn, Token::Use, Token::Return];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_newlines() {
+        let source = "fn\n\nuse\n\n\nreturn";
+        let expected = vec![Token::Fn, Token::Use, Token::Return];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_tabs() {
+        let source = "fn\t\tuse\t\t\treturn";
+        let expected = vec![Token::Fn, Token::Use, Token::Return];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    // ===== Complex Examples =====
+    #[test]
+    fn test_function_declaration() {
+        let source = "fn add(a: i32, b: i32) { return a; }";
+        let expected = vec![
+            Token::Fn,
+            Token::Identifier("add"),
+            Token::OpenParen,
+            Token::Identifier("a"),
+            Token::Colon,
+            Token::Identifier("i32"),
+            Token::Comma,
+            Token::Identifier("b"),
+            Token::Colon,
+            Token::Identifier("i32"),
+            Token::CloseParen,
+            Token::OpenSquirrely,
+            Token::Return,
+            Token::Identifier("a"),
+            Token::Semicolon,
+            Token::CloseSquirrely,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_array_syntax() {
+        let source = "const arr: [3]i32 = [1, 2, 3];";
+        let expected = vec![
+            Token::Const,
+            Token::Identifier("arr"),
+            Token::Colon,
+            Token::OpenBracket,
+            Token::Number("3"),
+            Token::CloseBracket,
+            Token::Identifier("i32"),
+            Token::Equal,
+            Token::OpenBracket,
+            Token::Number("1"),
+            Token::Comma,
+            Token::Number("2"),
+            Token::Comma,
+            Token::Number("3"),
+            Token::CloseBracket,
+            Token::Semicolon,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_pointer_syntax() {
+        let source = "fn deref(ptr: *i32) { return *ptr; }";
+        let expected = vec![
+            Token::Fn,
+            Token::Identifier("deref"),
+            Token::OpenParen,
+            Token::Identifier("ptr"),
+            Token::Colon,
+            Token::Star,
+            Token::Identifier("i32"),
+            Token::CloseParen,
+            Token::OpenSquirrely,
+            Token::Return,
+            Token::Star,
+            Token::Identifier("ptr"),
+            Token::Semicolon,
+            Token::CloseSquirrely,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn test_hello_world() {
         let source = "use std.io; i32 main() { io.println(\"Hello, world!\"); return 0; }";
         let expected = vec![
             Token::Use,
@@ -126,35 +475,61 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let result = Lexer::new(source).collect::<Vec<Token>>();
-        assert_eq!(expected, result)
+        assert_eq!(expected, result);
     }
 
+    // ===== Edge Cases =====
     #[test]
-    fn parse_str_literal() {
-        let source = "\"hello\"";
-        let expected = vec![Token::StringLiteral("hello")];
+    fn test_empty_source() {
+        let source = "";
+        let expected: Vec<Token> = vec![];
         let result = Lexer::new(source).collect::<Vec<Token>>();
         assert_eq!(expected, result);
     }
 
     #[test]
-    fn parse_keywords() {
-        let source = "hello use return fn";
-        let expected = vec![
-            Token::Identifier("hello"),
-            Token::Use,
-            Token::Return,
-            Token::Fn,
-        ];
+    fn test_only_whitespace() {
+        let source = "   \t\n  \t  \n\n";
+        let expected: Vec<Token> = vec![];
         let result = Lexer::new(source).collect::<Vec<Token>>();
-        assert_eq!(expected, result)
+        assert_eq!(expected, result);
     }
 
     #[test]
-    fn parse_number() {
-        let source = "42";
-        let expected = vec![Token::Number("42")];
+    fn test_only_comments() {
+        let source = "// comment 1\n// comment 2\n// comment 3";
+        let expected: Vec<Token> = vec![];
         let result = Lexer::new(source).collect::<Vec<Token>>();
-        assert_eq!(expected, result)
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown Character: '@'")]
+    fn test_unknown_character() {
+        let source = "fn @ use";
+        let _ = Lexer::new(source).collect::<Vec<Token>>();
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown Character: '&'")]
+    fn test_unknown_ampersand() {
+        let source = "& foo";
+        let _ = Lexer::new(source).collect::<Vec<Token>>();
+    }
+
+    #[test]
+    fn test_adjacent_tokens_no_space() {
+        let source = "fn(){}[]";
+        let expected = vec![
+            Token::Fn,
+            Token::OpenParen,
+            Token::CloseParen,
+            Token::OpenSquirrely,
+            Token::CloseSquirrely,
+            Token::OpenBracket,
+            Token::CloseBracket,
+        ];
+        let result = Lexer::new(source).collect::<Vec<Token>>();
+        assert_eq!(expected, result);
     }
 }
