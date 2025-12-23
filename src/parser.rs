@@ -23,10 +23,18 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 if tokens.next() != Some(Token::OpenParen) {
                     panic!("Expected args")
                 }
+                let mut parens = 0;
                 let mut args_tokens = vec![];
-                while let Some(t) = tokens.next()
-                    && t != Token::CloseParen
-                {
+                while let Some(t) = tokens.next() {
+                    if t == Token::OpenParen {
+                        parens += 1
+                    }
+                    if t == Token::CloseParen {
+                        parens -= 1
+                    }
+                    if t == Token::CloseParen && parens < 1 {
+                        break;
+                    }
                     args_tokens.push(t);
                 }
                 let args = Arg::parse_args(&args_tokens);
@@ -79,16 +87,16 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
 }
 
 fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a>> {
-    let mut brackets = 0;
+    let mut braces = 0;
     let mut tokens = vec![];
     while let Some(token) = iter.next() {
         match token {
-            Token::OpenBracket => brackets += 1,
-            Token::CloseBracket => {
-                if brackets == 0 {
+            Token::OpenSquirrely => braces += 1,
+            Token::CloseSquirrely => {
+                if braces == 0 {
                     break;
                 } else {
-                    brackets -= 1
+                    braces -= 1
                 }
             }
             _ => tokens.push(token),
@@ -137,17 +145,22 @@ impl<'a> Expression<'a> {
         match tokens[0] {
             Token::Identifier(id) if tokens.get(1) == Some(&Token::OpenParen) => {
                 let mut args_tokens: Vec<Vec<Token<'_>>> = vec![];
+                let mut parens = 0;
                 for token in tokens.into_iter().skip(2) {
-                    if token == Token::CloseParen {
+                    if token == Token::OpenParen {
+                        parens += 1;
+                    } else if token == Token::CloseParen && parens == 0 {
                         break;
-                    } else if token == Token::Comma {
+                    } else if token == Token::CloseParen {
+                        parens -= 1;
+                    }
+                    if token == Token::Comma && parens == 0 {
                         args_tokens.push(vec![]);
                     } else {
                         if args_tokens.is_empty() {
                             args_tokens.push(vec![]);
                         }
-                        let idx = args_tokens.len() - 1;
-                        args_tokens[idx].push(token);
+                        args_tokens.last_mut().unwrap().push(token);
                     }
                 }
                 let args = args_tokens
@@ -207,6 +220,12 @@ impl<'a> Arg<'a> {
     }
 
     fn parse_pair(tokens: &[Token<'a>]) -> Self {
+        if matches!(tokens, [Token::Self_]) {
+            return Self {
+                identifier: "self",
+                type_: Type::Self_,
+            };
+        }
         let mut parts = tokens.split(|t| *t == Token::Colon);
         let identifier = if let Some([Token::Identifier(id)]) = parts.next() {
             id
@@ -227,6 +246,7 @@ pub enum Type<'a> {
     Identifier(&'a str),
     Pointer(&'a str),
     Array(&'a str),
+    Self_,
 }
 
 impl<'a> Type<'a> {
@@ -979,6 +999,7 @@ mod tests {
 
     #[test]
     fn test_complex_nested_calls() {
+        // func1(func2(1, 2), "test")
         let tokens = vec![
             Token::Identifier("func1"),
             Token::OpenParen,
