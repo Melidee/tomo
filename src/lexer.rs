@@ -5,8 +5,12 @@ pub enum Token<'a> {
     Module,
     Use,
     Fn,
+    Self_,
+    Let,
     Return,
     Const,
+    Type,
+    Struct,
     OpenParen,
     CloseParen,
     OpenSquirrely,
@@ -16,8 +20,11 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Comma,
+    Slash,
     Star,
     Equal,
+    Plus,
+    Minus,
     Identifier(&'a str),
     StringLiteral(&'a str),
     Number(&'a str),
@@ -36,10 +43,10 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn chomp<C: Fn((usize, char)) -> bool>(
+    fn chomp<C: FnMut((usize, char)) -> bool>(
         &mut self,
         start: usize,
-        condition: C,
+        mut condition: C,
     ) -> Option<&'a str> {
         let mut string_length = 0;
         while let Some(chi) = self.chars.peek()
@@ -64,8 +71,16 @@ impl<'a> Iterator for Lexer<'a> {
                 self.chars.next(); // throw away closing quote
                 Some(Token::StringLiteral(literal))
             }
-            '/' if matches!(self.chars.peek(), Some((_, '/')))  => {
-                self.chomp(i, |(_, ch)| ch != '\n' );
+            '/' if matches!(self.chars.peek(), Some((_, '/'))) => {
+                self.chomp(i, |(_, ch)| ch != '\n');
+                self.next()
+            }
+            '/' if matches!(self.chars.peek(), Some((_, '*'))) => {
+                while let Some((_, ch)) = self.chars.next() {
+                    if ch == '*' && self.chars.peek().is_some_and(|(_, ch2)| *ch2 == '/') {
+                        break;
+                    }
+                }
                 self.next()
             }
             'a'..='z' | 'A'..='Z' | '.' | '_' => {
@@ -81,14 +96,18 @@ impl<'a> Iterator for Lexer<'a> {
                     "module" => Token::Module,
                     "use" => Token::Use,
                     "fn" => Token::Fn,
+                    "self" => Token::Self_,
+                    "let" => Token::Let,
                     "return" => Token::Return,
                     "const" => Token::Const,
+                    "type" => Token::Type,
+                    "struct" => Token::Struct,
                     id => Token::Identifier(id),
                 };
                 Some(token)
             }
             '0'..='9' => {
-                let is_digit = |(_, c)| ('0'..'9').contains(&c) || c == '.';
+                let is_digit = |(_, c)| ('0'..='9').contains(&c) || c == '.';
                 let number = self.chomp(i, is_digit)?;
                 Some(Token::Number(number))
             }
@@ -101,8 +120,11 @@ impl<'a> Iterator for Lexer<'a> {
             ';' => Some(Token::Semicolon),
             ':' => Some(Token::Colon),
             ',' => Some(Token::Comma),
+            '/' => Some(Token::Slash),
             '*' => Some(Token::Star),
             '=' => Some(Token::Equal),
+            '+' => Some(Token::Plus),
+            '-' => Some(Token::Minus),
             ' ' | '\t' | '\n' => self.next(), // ignore whitespace and try to parse the next token
             _ => panic!("Unknown Character: '{ch}'"),
         }
@@ -249,8 +271,7 @@ mod tests {
     #[test]
     fn test_string_with_special_chars() {
         let source = r#""123!@#$%^&*()_+-=[]{}|;:,.<>?""#;
-        let expected =
-            vec![Token::StringLiteral("123!@#$%^&*()_+-=[]{}|;:,.<>?")];
+        let expected = vec![Token::StringLiteral("123!@#$%^&*()_+-=[]{}|;:,.<>?")];
         let result = Lexer::new(source).collect::<Vec<Token>>();
         assert_eq!(expected, result);
     }
