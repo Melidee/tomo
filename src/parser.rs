@@ -53,7 +53,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 let block_tokens = collect_block(&mut tokens);
                 let block = parse(block_tokens);
                 asts.push(Ast::FuncDef {
-                    identifier,
+                    identifier: identifier.into(),
                     args,
                     return_type,
                     block,
@@ -109,12 +109,12 @@ fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a
 pub enum Ast<'a> {
     Use(&'a str),
     ConstDef {
-        identifier: &'a str,
+        identifier: Identifier<'a>,
         type_: Type<'a>,
         expr: Expression<'a>,
     },
     FuncDef {
-        identifier: &'a str,
+        identifier: Identifier<'a>,
         args: Vec<Arg<'a>>,
         return_type: Type<'a>,
         block: Vec<Ast<'a>>,
@@ -122,8 +122,8 @@ pub enum Ast<'a> {
     Return(Expression<'a>),
     Assignment {
         declaration: bool,
-        identifier: &'a str,
-        type_: &'a str,
+        identifier: Identifier<'a>,
+        type_: Identifier<'a>,
         expr: Expression<'a>,
     },
     Expression(Expression<'a>),
@@ -131,9 +131,9 @@ pub enum Ast<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
-    Identifier(&'a str, Vec<&'a str>),
+    Identifier(Identifier<'a>),
     FuncCall {
-        identifier: &'a str,
+        identifier: Identifier<'a>,
         args: Vec<Expression<'a>>,
     },
     StringLiteral(&'a str),
@@ -169,22 +169,37 @@ impl<'a> Expression<'a> {
                     .collect();
 
                 Self::FuncCall {
-                    identifier: id,
+                    identifier: id.into(),
                     args,
                 }
             }
-            Token::Identifier(id) => Self::parse_identifier(id),
+            Token::Identifier(id) => Expression::Identifier(id.into()),
             Token::StringLiteral(lit) => Expression::StringLiteral(lit),
             Token::Number(num) => Expression::NumberLiteral(num),
             _ => panic!("not an expr {:?}", tokens),
         }
     }
+}
 
-    fn parse_identifier(id: &'a str) -> Expression<'a> {
-        let mut parts = id.split(".");
-        let first = parts.next().unwrap(); // we can safely unwrap here because split always returns at least one element
-        let rest = parts.collect();
-        Expression::Identifier(first, rest)
+#[derive(Debug, PartialEq, Clone)]
+pub struct Identifier<'a>(&'a str);
+
+impl<'a> Identifier<'a> {
+    pub fn parts(&self) -> Vec<&'a str> {
+        self.0.split('.').collect()
+    }
+
+    pub fn last(&self) -> &'a str {
+        self.0
+            .split('.')
+            .last()
+            .expect("split always returns at least one value")
+    }
+}
+
+impl<'a> From<&'a str> for Identifier<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
     }
 }
 
@@ -328,7 +343,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "foo",
+            identifier: "foo".into(),
             args: vec![],
             return_type: Type::Identifier("void"),
             block: vec![],
@@ -353,7 +368,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "inc",
+            identifier: "inc".into(),
             args: vec![Arg {
                 identifier: "x",
                 type_: Type::Identifier("i32"),
@@ -385,7 +400,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "add",
+            identifier: "add".into(),
             args: vec![
                 Arg {
                     identifier: "a",
@@ -420,7 +435,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "deref",
+            identifier: "deref".into(),
             args: vec![Arg {
                 identifier: "ptr",
                 type_: Type::Pointer("i32"),
@@ -450,7 +465,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "process",
+            identifier: "process".into(),
             args: vec![Arg {
                 identifier: "arr",
                 type_: Type::Array("i32"),
@@ -476,7 +491,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "get_ptr",
+            identifier: "get_ptr".into(),
             args: vec![],
             return_type: Type::Pointer("i32"),
             block: vec![],
@@ -500,7 +515,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "get_array",
+            identifier: "get_array".into(),
             args: vec![],
             return_type: Type::Array("i32"),
             block: vec![],
@@ -521,7 +536,7 @@ mod tests {
     #[test]
     fn test_return_identifier() {
         let source = vec![Token::Return, Token::Identifier("x"), Token::Semicolon];
-        let expected = vec![Ast::Return(Expression::Identifier("x", vec![]))];
+        let expected = vec![Ast::Return(Expression::Identifier("x".into()))];
         let result = parse(source);
         assert_eq!(expected, result);
     }
@@ -545,7 +560,7 @@ mod tests {
             Token::Identifier("obj.field"),
             Token::Semicolon,
         ];
-        let expected = vec![Ast::Return(Expression::Identifier("obj", vec!["field"]))];
+        let expected = vec![Ast::Return(Expression::Identifier("obj.field".into()))];
         let result = parse(source);
         assert_eq!(expected, result);
     }
@@ -560,7 +575,7 @@ mod tests {
             Token::Semicolon,
         ];
         let expected = vec![Ast::Expression(Expression::FuncCall {
-            identifier: "foo",
+            identifier: "foo".into(),
             args: vec![],
         })];
         let result = parse(source);
@@ -577,7 +592,7 @@ mod tests {
             Token::Semicolon,
         ];
         let expected = vec![Ast::Expression(Expression::FuncCall {
-            identifier: "print",
+            identifier: "print".into(),
             args: vec![Expression::StringLiteral("hello")],
         })];
         let result = parse(source);
@@ -596,7 +611,7 @@ mod tests {
             Token::Semicolon,
         ];
         let expected = vec![Ast::Expression(Expression::FuncCall {
-            identifier: "add",
+            identifier: "add".into(),
             args: vec![
                 Expression::NumberLiteral("1"),
                 Expression::NumberLiteral("2"),
@@ -620,9 +635,9 @@ mod tests {
             Token::Semicolon,
         ];
         let expected = vec![Ast::Expression(Expression::FuncCall {
-            identifier: "process",
+            identifier: "process".into(),
             args: vec![
-                Expression::Identifier("x", vec![]),
+                Expression::Identifier("x".into()),
                 Expression::NumberLiteral("42"),
                 Expression::StringLiteral("test"),
             ],
@@ -641,7 +656,7 @@ mod tests {
             Token::Semicolon,
         ];
         let expected = vec![Ast::Expression(Expression::FuncCall {
-            identifier: "io.println",
+            identifier: "io.println".into(),
             args: vec![Expression::StringLiteral("Hello")],
         })];
         let result = parse(source);
@@ -653,14 +668,14 @@ mod tests {
     fn test_expression_simple_identifier() {
         let tokens = vec![Token::Identifier("foo")];
         let result = Expression::parse(tokens);
-        assert_eq!(Expression::Identifier("foo", vec![]), result);
+        assert_eq!(Expression::Identifier("foo".into()), result);
     }
 
     #[test]
     fn test_expression_dotted_identifier() {
         let tokens = vec![Token::Identifier("std.io.println")];
         let result = Expression::parse(tokens);
-        assert_eq!(Expression::Identifier("std", vec!["io", "println"]), result);
+        assert_eq!(Expression::Identifier("std.io.println".into()), result);
     }
 
     #[test]
@@ -691,9 +706,9 @@ mod tests {
         let result = Expression::parse(tokens);
         assert_eq!(
             Expression::FuncCall {
-                identifier: "outer",
+                identifier: "outer".into(),
                 args: vec![Expression::FuncCall {
-                    identifier: "inner",
+                    identifier: "inner".into(),
                     args: vec![Expression::NumberLiteral("1")],
                 }],
             },
@@ -850,12 +865,12 @@ mod tests {
         let expected = vec![
             Ast::Use("std.io"),
             Ast::FuncDef {
-                identifier: "main",
+                identifier: "main".into(),
                 args: vec![],
                 return_type: Type::Identifier("i32"),
                 block: vec![
                     Ast::Expression(Expression::FuncCall {
-                        identifier: "io.println",
+                        identifier: "io.println".into(),
                         args: vec![Expression::StringLiteral("Hello, world!")],
                     }),
                     Ast::Return(Expression::NumberLiteral("0")),
@@ -889,7 +904,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "add",
+            identifier: "add".into(),
             args: vec![
                 Arg {
                     identifier: "a",
@@ -901,7 +916,7 @@ mod tests {
                 },
             ],
             return_type: Type::Identifier("i32"),
-            block: vec![Ast::Return(Expression::Identifier("a", vec![]))],
+            block: vec![Ast::Return(Expression::Identifier("a".into()))],
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -929,13 +944,13 @@ mod tests {
         ];
         let expected = vec![
             Ast::FuncDef {
-                identifier: "foo",
+                identifier: "foo".into(),
                 args: vec![],
                 return_type: Type::Identifier("void"),
                 block: vec![],
             },
             Ast::FuncDef {
-                identifier: "bar",
+                identifier: "bar".into(),
                 args: vec![],
                 return_type: Type::Identifier("void"),
                 block: vec![],
@@ -970,16 +985,16 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![Ast::FuncDef {
-            identifier: "test",
+            identifier: "test".into(),
             args: vec![],
             return_type: Type::Identifier("void"),
             block: vec![
                 Ast::Expression(Expression::FuncCall {
-                    identifier: "foo",
+                    identifier: "foo".into(),
                     args: vec![],
                 }),
                 Ast::Expression(Expression::FuncCall {
-                    identifier: "bar",
+                    identifier: "bar".into(),
                     args: vec![Expression::NumberLiteral("1")],
                 }),
                 Ast::Return(Expression::NumberLiteral("0")),
@@ -1016,10 +1031,10 @@ mod tests {
         let result = Expression::parse(tokens);
         assert_eq!(
             Expression::FuncCall {
-                identifier: "func1",
+                identifier: "func1".into(),
                 args: vec![
                     Expression::FuncCall {
-                        identifier: "func2",
+                        identifier: "func2".into(),
                         args: vec![
                             Expression::NumberLiteral("1"),
                             Expression::NumberLiteral("2"),
