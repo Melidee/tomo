@@ -1,4 +1,25 @@
+use std::iter::Peekable;
+
 use crate::lexer::Token;
+
+#[derive(Debug, PartialEq)]
+pub enum Ast<'a> {
+    Use(&'a str),
+    ConstDef {
+        identifier: Identifier<'a>,
+        type_: Type<'a>,
+        expr: Expression<'a>,
+    },
+    FuncDef {
+        identifier: Identifier<'a>,
+        args: Vec<Arg<'a>>,
+        return_type: Type<'a>,
+        block: Block<'a>,
+    },
+    Return(Expression<'a>),
+    Assignment(Assignment<'a>),
+    Expression(Expression<'a>),
+}
 
 pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
     let mut asts = vec![];
@@ -14,11 +35,36 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                     panic!("identifier not found after use")
                 }
             }
+            Token::Const => {
+                let identifier = match tokens.next() {
+                    Some(Token::Identifier(id)) => id.into(),
+                    _ => panic!("expected identifier after const"),
+                };
+                if tokens.next() != Some(Token::Colon) {
+                    panic!("expected type")
+                }
+                let mut type_tokens = vec![];
+                while let Some(t) = tokens.next()
+                    && t != Token::Equal
+                {
+                    type_tokens.push(t);
+                }
+                let mut expr_tokens = vec![];
+                while let Some(t) = tokens.next()
+                    && t != Token::Semicolon
+                {
+                    expr_tokens.push(t);
+                }
+                asts.push(Ast::ConstDef {
+                    identifier,
+                    type_: Type::parse(&type_tokens),
+                    expr: Expression::parse(expr_tokens),
+                });
+            }
             Token::Fn => {
-                let identifier = if let Some(Token::Identifier(id)) = tokens.next() {
-                    id
-                } else {
-                    panic!("Expected identifier")
+                let identifier = match tokens.next() {
+                    Some(Token::Identifier(id)) => id,
+                    _ => panic!("expected identifier after fn"),
                 };
                 if tokens.next() != Some(Token::OpenParen) {
                     panic!("Expected args")
@@ -50,8 +96,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                     type_tokens.push(t);
                 }
                 let return_type = Type::parse(&type_tokens);
-                let block_tokens = collect_block(&mut tokens);
-                let block = parse(block_tokens);
+                let block = Block::parse(&mut tokens);
                 asts.push(Ast::FuncDef {
                     identifier: identifier.into(),
                     args,
@@ -84,49 +129,6 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
         }
     }
     return asts;
-}
-
-fn collect_block<'a>(iter: &mut impl Iterator<Item = Token<'a>>) -> Vec<Token<'a>> {
-    let mut braces = 0;
-    let mut tokens = vec![];
-    while let Some(token) = iter.next() {
-        match token {
-            Token::OpenSquirrely => braces += 1,
-            Token::CloseSquirrely => {
-                if braces == 0 {
-                    break;
-                } else {
-                    braces -= 1
-                }
-            }
-            _ => tokens.push(token),
-        }
-    }
-    return tokens;
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Ast<'a> {
-    Use(&'a str),
-    ConstDef {
-        identifier: Identifier<'a>,
-        type_: Type<'a>,
-        expr: Expression<'a>,
-    },
-    FuncDef {
-        identifier: Identifier<'a>,
-        args: Vec<Arg<'a>>,
-        return_type: Type<'a>,
-        block: Vec<Ast<'a>>,
-    },
-    Return(Expression<'a>),
-    Assignment {
-        declaration: bool,
-        identifier: Identifier<'a>,
-        type_: Identifier<'a>,
-        expr: Expression<'a>,
-    },
-    Expression(Expression<'a>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -205,8 +207,56 @@ impl<'a> From<&'a str> for Identifier<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum Statement<'a> {
+    Expression(Expression<'a>),
     Return(Expression<'a>),
+    Declaration(Assignment<'a>),
     Assignment(Assignment<'a>),
+    Block(Block<'a>),
+    Empty,
+    Done,
+}
+
+impl<'a> Statement<'a> {
+    fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
+        if let Some(token) = tokens.next() {
+            match token {
+                Token::Let => Self::parse_assignment(tokens),
+                Token::Return => Self::parse_return(tokens),
+                Token::OpenSquirrely => Self::Block(Block::parse(tokens)),
+                Token::CloseSquirrely => Self::Done,
+                _ => {
+                    let mut statement_tokens = vec![token];
+                    while let Some(t) = tokens.next()
+                        && t != Token::Semicolon
+                    {
+                        statement_tokens.push(t);
+                    }
+                    if statement_tokens.contains(&Token::Equal) {
+                        let mut statement_iter = statement_tokens.into_iter();
+                        Self::parse_assignment(&mut statement_iter)
+                    } else {
+                        Self::Expression(Expression::parse(statement_tokens))
+                    }
+                }
+            }
+        } else {
+            Statement::Empty
+        }
+    }
+
+    fn parse_return(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
+        let mut return_tokens = vec![];
+        while let Some(t) = tokens.next()
+            && t != Token::Semicolon
+        {
+            return_tokens.push(t);
+        }
+        Self::Return(Expression::parse(return_tokens))
+    }
+
+    fn parse_assignment(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
+        todo!()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -253,6 +303,36 @@ impl<'a> Arg<'a> {
             panic!("failed to parse arg")
         }
         Self { identifier, type_ }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Block<'a> {
+    statements: Vec<Statement<'a>>,
+}
+
+impl<'a> Block<'a> {
+    fn new() -> Self {
+        return Self { statements: vec![] };
+    }
+
+    fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
+        let mut block = Block::new();
+        loop {
+            let statement = Statement::parse(tokens);
+            if statement == Statement::Done {
+                break;
+            } else {
+                block.statements.push(statement);
+            }
+        }
+        block
+    }
+}
+
+impl<'a> From<Vec<Statement<'a>>> for Block<'a> {
+    fn from(statements: Vec<Statement<'a>>) -> Self {
+        Self { statements }
     }
 }
 
@@ -346,7 +426,7 @@ mod tests {
             identifier: "foo".into(),
             args: vec![],
             return_type: Type::Identifier("void"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -374,7 +454,7 @@ mod tests {
                 type_: Type::Identifier("i32"),
             }],
             return_type: Type::Identifier("i32"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -412,7 +492,7 @@ mod tests {
                 },
             ],
             return_type: Type::Identifier("i32"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -441,7 +521,7 @@ mod tests {
                 type_: Type::Pointer("i32"),
             }],
             return_type: Type::Identifier("i32"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -471,7 +551,7 @@ mod tests {
                 type_: Type::Array("i32"),
             }],
             return_type: Type::Identifier("void"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -494,7 +574,7 @@ mod tests {
             identifier: "get_ptr".into(),
             args: vec![],
             return_type: Type::Pointer("i32"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -518,7 +598,7 @@ mod tests {
             identifier: "get_array".into(),
             args: vec![],
             return_type: Type::Array("i32"),
-            block: vec![],
+            block: Block::new(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -869,12 +949,13 @@ mod tests {
                 args: vec![],
                 return_type: Type::Identifier("i32"),
                 block: vec![
-                    Ast::Expression(Expression::FuncCall {
+                    Statement::Expression(Expression::FuncCall {
                         identifier: "io.println".into(),
                         args: vec![Expression::StringLiteral("Hello, world!")],
                     }),
-                    Ast::Return(Expression::NumberLiteral("0")),
-                ],
+                    Statement::Return(Expression::NumberLiteral("0")),
+                ]
+                .into(),
             },
         ];
         let result = parse(source);
@@ -916,7 +997,7 @@ mod tests {
                 },
             ],
             return_type: Type::Identifier("i32"),
-            block: vec![Ast::Return(Expression::Identifier("a".into()))],
+            block: vec![Statement::Return(Expression::Identifier("a".into()))].into(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
@@ -947,13 +1028,13 @@ mod tests {
                 identifier: "foo".into(),
                 args: vec![],
                 return_type: Type::Identifier("void"),
-                block: vec![],
+                block: Block::new(),
             },
             Ast::FuncDef {
                 identifier: "bar".into(),
                 args: vec![],
                 return_type: Type::Identifier("void"),
-                block: vec![],
+                block: Block::new(),
             },
         ];
         let result = parse(source);
@@ -989,16 +1070,17 @@ mod tests {
             args: vec![],
             return_type: Type::Identifier("void"),
             block: vec![
-                Ast::Expression(Expression::FuncCall {
+                Statement::Expression(Expression::FuncCall {
                     identifier: "foo".into(),
                     args: vec![],
                 }),
-                Ast::Expression(Expression::FuncCall {
+                Statement::Expression(Expression::FuncCall {
                     identifier: "bar".into(),
                     args: vec![Expression::NumberLiteral("1")],
                 }),
-                Ast::Return(Expression::NumberLiteral("0")),
-            ],
+                Statement::Return(Expression::NumberLiteral("0")),
+            ]
+            .into(),
         }];
         let result = parse(source);
         assert_eq!(expected, result);
