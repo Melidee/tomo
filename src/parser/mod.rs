@@ -1,10 +1,61 @@
 use std::iter::Peekable;
 
-use crate::lexer::Token;
+use crate::error::{Error, Result};
+use crate::lexer::{Lexer, Token};
+
+type Tokens<'a> = Peekable<Lexer<'a>>;
+
+
+fn expect_id<'a>(tokens: &mut Tokens<'a>) -> Result<Identifier<'a>> {
+    match tokens.next() {
+        Some(Token::Identifier(id)) => Ok(id.into()),
+        token => Err(Error::UnexpectedToken(
+            "identifier".into(),
+            token.unwrap_or(Token::Eof).to_string(),
+        )),
+    }
+}
+
+fn expect_symbol<'a>(tokens: &mut Tokens<'a>, symbol: Token<'a>) -> Result<()> {
+    if let Some(token) = tokens.next() {
+        if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
+            return Ok(());
+        }
+        return Err(Error::UnexpectedToken(
+            symbol.to_string(),
+            token.to_string(),
+        ));
+    }
+    Err(Error::UnexpectedToken(
+        symbol.to_string(),
+        Token::Eof.to_string(),
+    ))
+}
+
+fn parse_module<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Module)?;
+    let id = expect_id(tokens)?;
+    expect_symbol(tokens, Token::Semicolon)?;
+    Ok(Ast::Module(id))
+}
+
+fn parse_use<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Use)?;
+    let id = expect_id(tokens)?;
+    expect_symbol(tokens, Token::Semicolon)?;
+    Ok(Ast::Use(id))
+}
+
+fn parse_const<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Const)?;
+    let identifier = expect_id(tokens)?;
+    todo!()
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Ast<'a> {
-    Use(&'a str),
+    Module(Identifier<'a>),
+    Use(Identifier<'a>),
     ConstDef {
         identifier: Identifier<'a>,
         type_: Type<'a>,
@@ -30,7 +81,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 if let Some(Token::Identifier(id)) = tokens.next()
                     && Some(Token::Semicolon) == tokens.next()
                 {
-                    asts.push(Ast::Use(id));
+                    asts.push(Ast::Use(id.into()));
                 } else {
                     panic!("identifier not found after use")
                 }
@@ -367,7 +418,7 @@ mod tests {
     #[test]
     fn test_simple_use() {
         let source = vec![Token::Use, Token::Identifier("std"), Token::Semicolon];
-        let expected = vec![Ast::Use("std")];
+        let expected = vec![Ast::Use("std".into())];
         let result = parse(source);
         assert_eq!(expected, result);
     }
@@ -375,7 +426,7 @@ mod tests {
     #[test]
     fn test_use_with_path() {
         let source = vec![Token::Use, Token::Identifier("std.io"), Token::Semicolon];
-        let expected = vec![Ast::Use("std.io")];
+        let expected = vec![Ast::Use("std.io".into())];
         let result = parse(source);
         assert_eq!(expected, result);
     }
@@ -390,7 +441,7 @@ mod tests {
             Token::Identifier("std.collections"),
             Token::Semicolon,
         ];
-        let expected = vec![Ast::Use("std.io"), Ast::Use("std.collections")];
+        let expected = vec![Ast::Use("std.io".into()), Ast::Use("std.collections".into())];
         let result = parse(source);
         assert_eq!(expected, result);
     }
@@ -943,7 +994,7 @@ mod tests {
             Token::CloseSquirrely,
         ];
         let expected = vec![
-            Ast::Use("std.io"),
+            Ast::Use("std.io".into()),
             Ast::FuncDef {
                 identifier: "main".into(),
                 args: vec![],
