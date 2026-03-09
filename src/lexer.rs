@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::CharIndices};
+use std::{fmt::Display, iter::Peekable, str::CharIndices};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -30,6 +30,7 @@ pub enum Token<'a> {
     Number(&'a str),
 }
 
+#[derive(Debug)]
 pub struct Lexer<'a> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
@@ -130,6 +131,45 @@ impl<'a> Iterator for Lexer<'a> {
         }
     }
 }
+
+impl<'a> Display for Token<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let formatted = match self {
+            Token::Module => "module",
+            Token::Use => "use",
+            Token::Fn => "fn",
+            Token::Self_ => "self",
+            Token::Let => "let",
+            Token::Return => "return",
+            Token::Const => "const",
+            Token::Type => "type",
+            Token::Struct => "struct",
+            Token::OpenParen => "(",
+            Token::CloseParen => ")",
+            Token::OpenSquirrely => "{",
+            Token::CloseSquirrely => "}",
+            Token::OpenBracket => "[",
+            Token::CloseBracket => "]",
+            Token::Colon => ":",
+            Token::Semicolon => ";",
+            Token::Comma => ",",
+            Token::Slash => "/",
+            Token::Star => "*",
+            Token::Equal => "=",
+            Token::Plus => "+",
+            Token::Minus => "-",
+            Token::Identifier(id) => id,
+            Token::StringLiteral(lit) => lit,
+            Token::Number(num) => num,
+        };
+        write!(f, "{}", formatted)
+    }
+}
+
+pub fn variant_eq<T>(a: &T, b: &T) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
 
 #[cfg(test)]
 mod tests {
