@@ -5,7 +5,9 @@ use crate::lexer::Token;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("expected {0} found {1}")]
-    UnexpectedToken(String, String)
+    UnexpectedToken(String, String),
+    #[error("unexpected end of input, expected: {0}")]
+    UnexpectedEndOfInput(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

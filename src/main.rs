@@ -1,14 +1,11 @@
 use std::{env, fs::read_to_string};
 
-use crate::{
-    lexer::{Lexer, Token},
-    parser::parse,
-};
+use crate::{lexer::{Lexer, Token}, parser::parse};
 
 mod lexer;
 mod parser;
 mod qbe;
-mod codegen;
+mod error;
 
 fn main() {
     let source_file = env::args()

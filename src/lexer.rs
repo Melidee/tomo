@@ -1,5 +1,7 @@
 use std::{fmt::Display, iter::Peekable, str::CharIndices};
 
+use crate::error::{Error, Result};
+
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Module,
@@ -34,6 +36,7 @@ pub enum Token<'a> {
 pub struct Lexer<'a> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
+    error: Option<Error>,
 }
 
 impl<'a> Lexer<'a> {
@@ -41,6 +44,7 @@ impl<'a> Lexer<'a> {
         Self {
             source,
             chars: source.char_indices().peekable(),
+            error: None,
         }
     }
 
@@ -48,7 +52,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         start: usize,
         mut condition: C,
-    ) -> Option<&'a str> {
+    ) -> &'a str {
         let mut string_length = 0;
         while let Some(chi) = self.chars.peek()
             && condition(*chi)
@@ -56,25 +60,24 @@ impl<'a> Lexer<'a> {
             self.chars.next(); // advance consumption of the iterator
             string_length += 1;
         }
-        self.source.get(start..=start + string_length)
+        self.source.get(start..=start + string_length).expect("")
     }
-}
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Token<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (i, ch) = self.chars.next()?;
+    fn next_token(&mut self) -> Result<Token<'a>> {
+        let (i, ch) = self
+            .chars
+            .next()
+            .ok_or(Error::UnexpectedEndOfInput("character".to_string()))?;
         match ch {
             '"' => {
                 let is_not_closing_quote = |(_, ch)| return ch != '"';
-                let literal = &self.chomp(i, is_not_closing_quote)?[1..];
+                let literal = &self.chomp(i, is_not_closing_quote)[1..];
                 self.chars.next(); // throw away closing quote
-                Some(Token::StringLiteral(literal))
+                Ok(Token::StringLiteral(literal))
             }
             '/' if matches!(self.chars.peek(), Some((_, '/'))) => {
                 self.chomp(i, |(_, ch)| ch != '\n');
-                self.next()
+                self.next_token()
             }
             '/' if matches!(self.chars.peek(), Some((_, '*'))) => {
                 while let Some((_, ch)) = self.chars.next() {
@@ -82,7 +85,7 @@ impl<'a> Iterator for Lexer<'a> {
                         break;
                     }
                 }
-                self.next()
+                self.next_token()
             }
             'a'..='z' | 'A'..='Z' | '.' | '_' => {
                 let is_id_char = |(_, c)| {
@@ -92,7 +95,7 @@ impl<'a> Iterator for Lexer<'a> {
                         || c == '.'
                         || c == '_'
                 };
-                let identifier = self.chomp(i, is_id_char)?;
+                let identifier = self.chomp(i, is_id_char);
                 let token = match identifier {
                     "module" => Token::Module,
                     "use" => Token::Use,
@@ -105,29 +108,46 @@ impl<'a> Iterator for Lexer<'a> {
                     "struct" => Token::Struct,
                     id => Token::Identifier(id),
                 };
-                Some(token)
+                Ok(token)
             }
             '0'..='9' => {
                 let is_digit = |(_, c)| ('0'..='9').contains(&c) || c == '.';
-                let number = self.chomp(i, is_digit)?;
-                Some(Token::Number(number))
+                let number = self.chomp(i, is_digit);
+                Ok(Token::Number(number))
             }
-            '(' => Some(Token::OpenParen),
-            ')' => Some(Token::CloseParen),
-            '{' => Some(Token::OpenSquirrely),
-            '}' => Some(Token::CloseSquirrely),
-            '[' => Some(Token::OpenBracket),
-            ']' => Some(Token::CloseBracket),
-            ';' => Some(Token::Semicolon),
-            ':' => Some(Token::Colon),
-            ',' => Some(Token::Comma),
-            '/' => Some(Token::Slash),
-            '*' => Some(Token::Star),
-            '=' => Some(Token::Equal),
-            '+' => Some(Token::Plus),
-            '-' => Some(Token::Minus),
-            ' ' | '\t' | '\n' => self.next(), // ignore whitespace and try to parse the next token
+            '(' => Ok(Token::OpenParen),
+            ')' => Ok(Token::CloseParen),
+            '{' => Ok(Token::OpenSquirrely),
+            '}' => Ok(Token::CloseSquirrely),
+            '[' => Ok(Token::OpenBracket),
+            ']' => Ok(Token::CloseBracket),
+            ';' => Ok(Token::Semicolon),
+            ':' => Ok(Token::Colon),
+            ',' => Ok(Token::Comma),
+            '/' => Ok(Token::Slash),
+            '*' => Ok(Token::Star),
+            '=' => Ok(Token::Equal),
+            '+' => Ok(Token::Plus),
+            '-' => Ok(Token::Minus),
+            ' ' | '\t' | '\n' => self.next_token(), // ignore whitespace and try to parse the next token
             _ => panic!("Unknown Character: '{ch}'"),
+        }
+    }
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.error.is_some() {
+            return None;
+        }
+        match self.next_token() {
+            Ok(token) => Some(token),
+            Err(err) => {
+                self.error = Some(err);
+                None
+            }
         }
     }
 }
@@ -169,7 +189,6 @@ impl<'a> Display for Token<'a> {
 pub fn variant_eq<T>(a: &T, b: &T) -> bool {
     std::mem::discriminant(a) == std::mem::discriminant(b)
 }
-
 
 #[cfg(test)]
 mod tests {
