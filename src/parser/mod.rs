@@ -5,51 +5,39 @@ use crate::lexer::{Lexer, Token};
 
 type Tokens<'a> = Peekable<Lexer<'a>>;
 
-
-fn expect_id<'a>(tokens: &mut Tokens<'a>) -> Result<Identifier<'a>> {
-    match tokens.next() {
-        Some(Token::Identifier(id)) => Ok(id.into()),
-        token => Err(Error::UnexpectedToken(
-            "identifier".into(),
-            token.unwrap_or(Token::Eof).to_string(),
-        )),
-    }
+pub struct Parser<'a> {
+    tokens: Peekable<Lexer<'a>>,
+    asts: Vec<Ast<'a>>,
 }
 
-fn expect_symbol<'a>(tokens: &mut Tokens<'a>, symbol: Token<'a>) -> Result<()> {
-    if let Some(token) = tokens.next() {
-        if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
-            return Ok(());
+impl<'a> Parser<'a> {
+    pub fn next_ast(&mut self) -> Result<Ast<'a>> {
+        unimplemented!()
+    }
+
+    pub fn chomp_id(&mut self) -> Result<Identifier<'a>> {
+        match self.tokens.next() {
+            Some(Token::Identifier(id)) => Ok(id.into()),
+            Some(token) => Err(Error::UnexpectedToken(
+                "identifier".to_string(),
+                token.to_string(),
+            )),
+            _ => Err(Error::UnexpectedEndOfInput("identifier".to_string())),
         }
-        return Err(Error::UnexpectedToken(
-            symbol.to_string(),
-            token.to_string(),
-        ));
     }
-    Err(Error::UnexpectedToken(
-        symbol.to_string(),
-        Token::Eof.to_string(),
-    ))
-}
 
-fn parse_module<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
-    expect_symbol(tokens, Token::Module)?;
-    let id = expect_id(tokens)?;
-    expect_symbol(tokens, Token::Semicolon)?;
-    Ok(Ast::Module(id))
-}
-
-fn parse_use<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
-    expect_symbol(tokens, Token::Use)?;
-    let id = expect_id(tokens)?;
-    expect_symbol(tokens, Token::Semicolon)?;
-    Ok(Ast::Use(id))
-}
-
-fn parse_const<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
-    expect_symbol(tokens, Token::Const)?;
-    let identifier = expect_id(tokens)?;
-    todo!()
+    pub fn expect_symbol(&mut self, symbol: Token<'a>) -> Result<()> {
+        if let Some(token) = self.tokens.next() {
+            if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
+                return Ok(());
+            }
+            return Err(Error::UnexpectedToken(
+                symbol.to_string(),
+                token.to_string(),
+            ));
+        }
+        Err(Error::UnexpectedEndOfInput(symbol.to_string()))
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -182,6 +170,50 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
     return asts;
 }
 
+fn expect_id<'a>(tokens: &mut impl Iterator<Item = Token<'a>>) -> Result<Identifier<'a>> {
+    match tokens.next() {
+        Some(Token::Identifier(id)) => Ok(id.into()),
+        Some(token) => Err(Error::UnexpectedToken(
+            "identifier".to_string(),
+            token.to_string(),
+        )),
+        _ => Err(Error::UnexpectedEndOfInput("identifier".to_string())),
+    }
+}
+
+fn expect_symbol<'a>(tokens: &mut Tokens<'a>, symbol: Token<'a>) -> Result<()> {
+    if let Some(token) = tokens.next() {
+        if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
+            return Ok(());
+        }
+        return Err(Error::UnexpectedToken(
+            symbol.to_string(),
+            token.to_string(),
+        ));
+    }
+    Err(Error::UnexpectedEndOfInput(symbol.to_string()))
+}
+
+fn parse_module<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Module)?;
+    let id = expect_id(tokens)?;
+    expect_symbol(tokens, Token::Semicolon)?;
+    Ok(Ast::Module(id))
+}
+
+fn parse_use<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Use)?;
+    let id = expect_id(tokens)?;
+    expect_symbol(tokens, Token::Semicolon)?;
+    Ok(Ast::Use(id))
+}
+
+fn parse_const<'a>(tokens: &mut Tokens<'a>) -> Result<Ast<'a>> {
+    expect_symbol(tokens, Token::Const)?;
+    let identifier = expect_id(tokens)?;
+    todo!()
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
     Identifier(Identifier<'a>),
@@ -306,14 +338,18 @@ impl<'a> Statement<'a> {
     }
 
     fn parse_assignment(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
-        todo!()
+        let declaration = tokens.next() == Some(Token::Let);
+        let identifier = expect_id(tokens).unwrap();
+        let expression = Expression::parse(tokens.collect());
+        Self::Assignment(Assignment { declaration, identifier, expression})
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Assignment<'a> {
     declaration: bool,
-    identifier: &'a str,
+    identifier: Identifier<'a>,
+    expression: Expression<'a>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -441,7 +477,10 @@ mod tests {
             Token::Identifier("std.collections"),
             Token::Semicolon,
         ];
-        let expected = vec![Ast::Use("std.io".into()), Ast::Use("std.collections".into())];
+        let expected = vec![
+            Ast::Use("std.io".into()),
+            Ast::Use("std.collections".into()),
+        ];
         let result = parse(source);
         assert_eq!(expected, result);
     }
