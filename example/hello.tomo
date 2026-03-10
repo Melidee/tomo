@@ -1,9 +1,15 @@
+module hello;
+
 use std.io;
 
 fn main(): i32 {
-    io.println("Hello, world!");  
+    let message: String = say("Hello!")
+    io.Println(message);
+    free message;
     return 0;
 }
 
-
-type hello i32
+fn say(message: String): String {
+    let result: String = String.format("Hello, %s!", message);
+    return result;
+}
