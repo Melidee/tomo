@@ -1,4 +1,6 @@
+use std::io::IsTerminal;
 use std::iter::Peekable;
+use std::os::macos::raw::stat;
 
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, Token};
@@ -97,7 +99,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 asts.push(Ast::ConstDef {
                     identifier,
                     type_: Type::parse(&type_tokens),
-                    expr: Expression::parse(expr_tokens),
+                    expr: Expression::parse(&expr_tokens),
                 });
             }
             Token::Fn => {
@@ -150,7 +152,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                 {
                     expr.push(token);
                 }
-                let expression = Expression::parse(expr);
+                let expression = Expression::parse(&expr);
                 asts.push(Ast::Return(expression));
             }
             Token::Identifier(id) if tokens.peek() == Some(&Token::OpenParen) => {
@@ -161,7 +163,7 @@ pub fn parse<'a>(source_tokens: Vec<Token<'a>>) -> Vec<Ast<'a>> {
                     args_tokens.push(token);
                 }
                 args_tokens.push(Token::CloseParen);
-                let func_call = Expression::parse(args_tokens);
+                let func_call = Expression::parse(&args_tokens);
                 asts.push(Ast::Expression(func_call));
             }
             _ => {}
@@ -181,7 +183,7 @@ fn expect_id<'a>(tokens: &mut impl Iterator<Item = Token<'a>>) -> Result<Identif
     }
 }
 
-fn expect_symbol<'a>(tokens: &mut Tokens<'a>, symbol: Token<'a>) -> Result<()> {
+fn expect_symbol<'a>(tokens: &mut impl Iterator<Item = Token<'a>>, symbol: Token<'a>) -> Result<()> {
     if let Some(token) = tokens.next() {
         if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
             return Ok(());
@@ -226,31 +228,31 @@ pub enum Expression<'a> {
 }
 
 impl<'a> Expression<'a> {
-    fn parse(tokens: Vec<Token<'a>>) -> Self {
+    fn parse(tokens: &[Token<'a>]) -> Self {
         match tokens[0] {
             Token::Identifier(id) if tokens.get(1) == Some(&Token::OpenParen) => {
                 let mut args_tokens: Vec<Vec<Token<'_>>> = vec![];
                 let mut parens = 0;
                 for token in tokens.into_iter().skip(2) {
-                    if token == Token::OpenParen {
+                    if token == &Token::OpenParen {
                         parens += 1;
-                    } else if token == Token::CloseParen && parens == 0 {
+                    } else if token == &Token::CloseParen && parens == 0 {
                         break;
-                    } else if token == Token::CloseParen {
+                    } else if token == &Token::CloseParen {
                         parens -= 1;
                     }
-                    if token == Token::Comma && parens == 0 {
+                    if token == &Token::Comma && parens == 0 {
                         args_tokens.push(vec![]);
                     } else {
                         if args_tokens.is_empty() {
                             args_tokens.push(vec![]);
                         }
-                        args_tokens.last_mut().unwrap().push(token);
+                        args_tokens.last_mut().unwrap().push(token.clone());
                     }
                 }
                 let args = args_tokens
                     .into_iter()
-                    .map(|arg_tokens| Expression::parse(arg_tokens))
+                    .map(|arg_tokens| Expression::parse(&arg_tokens))
                     .collect();
 
                 Self::FuncCall {
@@ -292,7 +294,7 @@ impl<'a> From<&'a str> for Identifier<'a> {
 pub enum Statement<'a> {
     Expression(Expression<'a>),
     Return(Expression<'a>),
-    Declaration(Assignment<'a>),
+    Declaration(Declaration<'a>),
     Assignment(Assignment<'a>),
     Block(Block<'a>),
     Empty,
@@ -300,54 +302,58 @@ pub enum Statement<'a> {
 }
 
 impl<'a> Statement<'a> {
-    fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
-        if let Some(token) = tokens.next() {
+    fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Result<Self> {
+        let mut statement_tokens = tokens.take_while(|t| t != &Token::Semicolon).collect::<Vec<Token>>();
+        if let Some(token) = statement_tokens.first() {
             match token {
-                Token::Let => Self::parse_assignment(tokens),
-                Token::Return => Self::parse_return(tokens),
-                Token::OpenSquirrely => Self::Block(Block::parse(tokens)),
-                Token::CloseSquirrely => Self::Done,
-                _ => {
-                    let mut statement_tokens = vec![token];
-                    while let Some(t) = tokens.next()
-                        && t != Token::Semicolon
-                    {
-                        statement_tokens.push(t);
-                    }
-                    if statement_tokens.contains(&Token::Equal) {
-                        let mut statement_iter = statement_tokens.into_iter();
-                        Self::parse_assignment(&mut statement_iter)
-                    } else {
-                        Self::Expression(Expression::parse(statement_tokens))
-                    }
-                }
+                Token::Let => Self::parse_declaration(statement_tokens),
+                Token::Return => Ok(Self::parse_return(statement_tokens)),
+                Token::OpenSquirrely => Ok(Self::Block(Block::parse(tokens))),
+                Token::CloseSquirrely => Ok(Self::Done),
+                _ if statement_tokens.contains(&Token::Equal) =>
+                    Self::parse_assignment(statement_tokens),
+                _ => Ok(Self::Expression(Expression::parse(&statement_tokens))),
             }
         } else {
-            Statement::Empty
+            Ok(Statement::Empty)
         }
     }
 
-    fn parse_return(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
-        let mut return_tokens = vec![];
-        while let Some(t) = tokens.next()
-            && t != Token::Semicolon
-        {
-            return_tokens.push(t);
-        }
-        Self::Return(Expression::parse(return_tokens))
+    fn parse_return(tokens: Vec<Token<'a>>) -> Self {
+        let return_expr = &tokens[1..];
+        let expr = Expression::parse(return_expr);
+        Self::Return(expr)
     }
 
-    fn parse_assignment(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
-        let declaration = tokens.next() == Some(Token::Let);
-        let identifier = expect_id(tokens).unwrap();
-        let expression = Expression::parse(tokens.collect());
-        Self::Assignment(Assignment { declaration, identifier, expression})
+    fn parse_declaration(token_vec: Vec<Token<'a>>) -> Result<Self> {
+        let mut tokens = token_vec.into_iter().peekable();
+        let identifier = expect_id(&mut tokens).unwrap();
+        expect_symbol(&mut tokens, Token::Colon).unwrap();
+        let type_tokens = tokens.by_ref().take_while(|t| t != &Token::Equal);
+        let type_ = Type::parse(&type_tokens.collect::<Vec<Token>>());
+        expect_symbol(&mut tokens, Token::Equal).unwrap();
+        let expression = Expression::parse(&tokens.collect::<Vec<Token>>());
+        Ok(Self::Declaration(Declaration {identifier, type_, expression}))
+    }
+
+    fn parse_assignment(token_vec: Vec<Token<'a>>) -> Result<Self> {
+        let mut tokens = token_vec.into_iter().peekable();
+        let identifier = expect_id(&mut tokens).unwrap();
+        expect_symbol(&mut tokens, Token::Equal).unwrap();
+        let expression = Expression::parse(&tokens.collect::<Vec<Token>>());
+        Ok(Self::Assignment(Assignment {identifier, expression}))
     }
 }
 
 #[derive(Debug, PartialEq)]
+pub struct Declaration<'a> {
+    identifier: Identifier<'a>,
+    type_: Type<'a>,
+    expression: Expression<'a>,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Assignment<'a> {
-    declaration: bool,
     identifier: Identifier<'a>,
     expression: Expression<'a>,
 }
@@ -406,7 +412,7 @@ impl<'a> Block<'a> {
     fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
         let mut block = Block::new();
         loop {
-            let statement = Statement::parse(tokens);
+            let statement = Statement::parse(tokens).unwrap();
             if statement == Statement::Done {
                 break;
             } else {
@@ -837,28 +843,28 @@ mod tests {
     #[test]
     fn test_expression_simple_identifier() {
         let tokens = vec![Token::Identifier("foo")];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(Expression::Identifier("foo".into()), result);
     }
 
     #[test]
     fn test_expression_dotted_identifier() {
         let tokens = vec![Token::Identifier("std.io.println")];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(Expression::Identifier("std.io.println".into()), result);
     }
 
     #[test]
     fn test_expression_string_literal() {
         let tokens = vec![Token::StringLiteral("test")];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(Expression::StringLiteral("test"), result);
     }
 
     #[test]
     fn test_expression_number_literal() {
         let tokens = vec![Token::Number("123")];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(Expression::NumberLiteral("123"), result);
     }
 
@@ -873,7 +879,7 @@ mod tests {
             Token::CloseParen,
             Token::CloseParen,
         ];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(
             Expression::FuncCall {
                 identifier: "outer".into(),
@@ -1200,7 +1206,7 @@ mod tests {
             Token::StringLiteral("test"),
             Token::CloseParen,
         ];
-        let result = Expression::parse(tokens);
+        let result = Expression::parse(&tokens);
         assert_eq!(
             Expression::FuncCall {
                 identifier: "func1".into(),

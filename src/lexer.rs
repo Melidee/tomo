@@ -2,7 +2,7 @@ use std::{fmt::Display, iter::Peekable, str::CharIndices};
 
 use crate::error::{Error, Result};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token<'a> {
     Module,
     Use,

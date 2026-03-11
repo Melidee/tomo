@@ -4,12 +4,12 @@ use std.io;
 
 fn main(): i32 {
     let message: String = say("Hello!")
-    io.Println(message);
-    free message;
+    io.println(message);
+    message.free();
     return 0;
 }
 
-fn say(message: String): String {
+fn say(text: String): String {
     let result: String = String.format("Hello, %s!", message);
     return result;
 }

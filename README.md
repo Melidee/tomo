@@ -13,7 +13,7 @@ fn main(): i32 {
     return 0;
 }
 
-fn say(message: String): String {
+fn say(text: String): String {
     let result: String = String.format("Hello, %s!", message);
     return result;
 }
