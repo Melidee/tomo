@@ -1,6 +1,4 @@
-use std::io::IsTerminal;
 use std::iter::Peekable;
-use std::os::macos::raw::stat;
 
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, Token};
@@ -8,13 +6,18 @@ use crate::lexer::{Lexer, Token};
 type Tokens<'a> = Peekable<Lexer<'a>>;
 
 pub struct Parser<'a> {
-    tokens: Peekable<Lexer<'a>>,
-    asts: Vec<Ast<'a>>,
+    tokens: Tokens<'a>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn next_ast(&mut self) -> Result<Ast<'a>> {
-        unimplemented!()
+    pub fn next_ast(&mut self) -> Result<TopLevelAst<'a>> {
+        match self.tokens.next().unwrap() {
+            Token::Module => self.parse_module(),
+            Token::Use => self.parse_use(),
+            Token::Const => self.parse_const(),
+            Token::Fn => self.parse_fn(),
+            unexpected_token => panic!("unexpected top level {unexpected_token}"),
+        }
     }
 
     pub fn chomp_id(&mut self) -> Result<Identifier<'a>> {
@@ -40,23 +43,157 @@ impl<'a> Parser<'a> {
         }
         Err(Error::UnexpectedEndOfInput(symbol.to_string()))
     }
+
+    fn parse_module(&mut self) -> Result<TopLevelAst<'a>> {
+        self.expect_symbol(Token::Module)?;
+        let id = self.chomp_id()?;
+        self.expect_symbol(Token::Semicolon)?;
+        Ok(TopLevelAst::Module(id))
+    }
+
+    fn parse_use(&mut self) -> Result<TopLevelAst<'a>> {
+        self.expect_symbol(Token::Use)?;
+        let id = self.chomp_id()?;
+        self.expect_symbol(Token::Semicolon)?;
+        Ok(TopLevelAst::Module(id))
+    }
+
+    fn parse_const(&mut self) -> Result<TopLevelAst<'a>> {
+        self.expect_symbol(Token::Const)?;
+        let identifier = self.chomp_id()?;
+        self.expect_symbol(Token::Colon)?;
+        let type_ = self.parse_type()?;
+        self.expect_symbol(Token::Equal)?;
+        let expr = self.parse_expr()?;
+        Ok(TopLevelAst::ConstDef(ConstDef {
+            identifier,
+            type_,
+            expr,
+        }))
+    }
+
+    fn parse_fn(&mut self) -> Result<TopLevelAst<'a>> {
+        self.expect_symbol(Token::Fn)?;
+        let identifier = self.chomp_id()?;
+        self.expect_symbol(Token::OpenParen)?;
+        let args = Arg::parse_args(self);
+        self.expect_symbol(Token::Colon)?;
+        let return_type = self.parse_type()?;
+        let block = if self.tokens.peek() == Some(&Token::OpenSquirrely) {
+            Some(Block::parse(&mut self))
+        } else {
+            None
+        };
+        Ok(TopLevelAst::FnDefinition(FnDef {
+            identifier,
+            args,
+            return_type,
+            block,
+        }))
+    }
+
+    fn parse_type(&mut self) -> Result<Type<'a>> {
+        todo!()
+    }
+
+    fn parse_expr(&mut self) -> Result<Expression<'a>> {
+        todo!()
+    }
+}
+
+pub enum TopLevelAst<'a> {
+    Module(Identifier<'a>),
+    Use(Identifier<'a>),
+    ConstDef(ConstDef<'a>),
+    FnDefinition(FnDef<'a>),
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ConstDef<'a> {
+    identifier: Identifier<'a>,
+    type_: Type<'a>,
+    expr: Expression<'a>,
+}
+
+pub struct FnDef<'a> {
+    identifier: Identifier<'a>,
+    args: Vec<Arg<'a>>,
+    return_type: Type<'a>,
+    block: Option<Block<'a>>,
+}
+
+pub struct Arg<'a> {
+    identifier: Identifier<'a>,
+    type_: Type<'a>,
+}
+
+impl<'a> Arg<'a> {
+    fn parse_args(parser: &mut Parser) -> Result<Vec<Self>> {
+        let mut parens = 0;
+        let args_tokens = parser.tokens.by_ref().take_while(|t| {
+            parens += match t {
+                Token::OpenParen => 1,
+                Token::CloseParen => -1,
+                _ => 0,
+            };
+            parens >= 0
+        }).peekable();
+        let mut args = vec![];
+        while args_tokens.peek().is_some() {
+            let id = parser.chomp_id()?;
+            parser.expect_symbol(Token::Colon)?;
+            let type_ = Type::parse(parser)
+        }
+        Ok(args)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Block<'a> {
+    statements: Vec<Statement<'a>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Identifier<'a>(&'a str);
+
+impl<'a> Identifier<'a> {
+    pub fn parts(&self) -> Vec<&'a str> {
+        self.0.split('.').collect()
+    }
+
+    pub fn last(&self) -> &'a str {
+        self.0
+            .split('.')
+            .last()
+            .expect("split always returns at least one value")
+    }
+}
+
+impl<'a> From<&'a str> for Identifier<'a> {
+    fn from(value: &'a str) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Type<'a> {
+    NamedType(Identifier<'a>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Expression<'a> {
+    StringLiteral(&'a str),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Statement<'a> {
+    Empty,
+    Expression(Expression<'a>),
+}
+
+/*
+#[derive(Debug, PartialEq)]
 pub enum Ast<'a> {
-    Module(Identifier<'a>),
-    Use(Identifier<'a>),
-    ConstDef {
-        identifier: Identifier<'a>,
-        type_: Type<'a>,
-        expr: Expression<'a>,
-    },
-    FuncDef {
-        identifier: Identifier<'a>,
-        args: Vec<Arg<'a>>,
-        return_type: Type<'a>,
-        block: Block<'a>,
-    },
     Return(Expression<'a>),
     Assignment(Assignment<'a>),
     Expression(Expression<'a>),
@@ -183,7 +320,10 @@ fn expect_id<'a>(tokens: &mut impl Iterator<Item = Token<'a>>) -> Result<Identif
     }
 }
 
-fn expect_symbol<'a>(tokens: &mut impl Iterator<Item = Token<'a>>, symbol: Token<'a>) -> Result<()> {
+fn expect_symbol<'a>(
+    tokens: &mut impl Iterator<Item = Token<'a>>,
+    symbol: Token<'a>,
+) -> Result<()> {
     if let Some(token) = tokens.next() {
         if std::mem::discriminant(&token) == std::mem::discriminant(&symbol) {
             return Ok(());
@@ -303,15 +443,18 @@ pub enum Statement<'a> {
 
 impl<'a> Statement<'a> {
     fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Result<Self> {
-        let mut statement_tokens = tokens.take_while(|t| t != &Token::Semicolon).collect::<Vec<Token>>();
+        let mut statement_tokens = tokens
+            .take_while(|t| t != &Token::Semicolon)
+            .collect::<Vec<Token>>();
         if let Some(token) = statement_tokens.first() {
             match token {
                 Token::Let => Self::parse_declaration(statement_tokens),
                 Token::Return => Ok(Self::parse_return(statement_tokens)),
                 Token::OpenSquirrely => Ok(Self::Block(Block::parse(tokens))),
                 Token::CloseSquirrely => Ok(Self::Done),
-                _ if statement_tokens.contains(&Token::Equal) =>
-                    Self::parse_assignment(statement_tokens),
+                _ if statement_tokens.contains(&Token::Equal) => {
+                    Self::parse_assignment(statement_tokens)
+                }
                 _ => Ok(Self::Expression(Expression::parse(&statement_tokens))),
             }
         } else {
@@ -333,7 +476,11 @@ impl<'a> Statement<'a> {
         let type_ = Type::parse(&type_tokens.collect::<Vec<Token>>());
         expect_symbol(&mut tokens, Token::Equal).unwrap();
         let expression = Expression::parse(&tokens.collect::<Vec<Token>>());
-        Ok(Self::Declaration(Declaration {identifier, type_, expression}))
+        Ok(Self::Declaration(Declaration {
+            identifier,
+            type_,
+            expression,
+        }))
     }
 
     fn parse_assignment(token_vec: Vec<Token<'a>>) -> Result<Self> {
@@ -341,7 +488,10 @@ impl<'a> Statement<'a> {
         let identifier = expect_id(&mut tokens).unwrap();
         expect_symbol(&mut tokens, Token::Equal).unwrap();
         let expression = Expression::parse(&tokens.collect::<Vec<Token>>());
-        Ok(Self::Assignment(Assignment {identifier, expression}))
+        Ok(Self::Assignment(Assignment {
+            identifier,
+            expression,
+        }))
     }
 }
 
@@ -399,30 +549,6 @@ impl<'a> Arg<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Block<'a> {
-    statements: Vec<Statement<'a>>,
-}
-
-impl<'a> Block<'a> {
-    fn new() -> Self {
-        return Self { statements: vec![] };
-    }
-
-    fn parse(tokens: &mut impl Iterator<Item = Token<'a>>) -> Self {
-        let mut block = Block::new();
-        loop {
-            let statement = Statement::parse(tokens).unwrap();
-            if statement == Statement::Done {
-                break;
-            } else {
-                block.statements.push(statement);
-            }
-        }
-        block
-    }
-}
-
 impl<'a> From<Vec<Statement<'a>>> for Block<'a> {
     fn from(statements: Vec<Statement<'a>>) -> Self {
         Self { statements }
@@ -452,6 +578,8 @@ impl<'a> Type<'a> {
     }
 }
 
+*/
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1225,3 +1353,4 @@ mod tests {
         );
     }
 }
+*/

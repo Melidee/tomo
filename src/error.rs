@@ -1,10 +1,9 @@
 use thiserror::Error;
 
-use crate::lexer::Token;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("expected {0} found {1}")]
+    #[error("expected {0:?} found {1}")]
     UnexpectedToken(String, String),
     #[error("unexpected end of input, expected: {0}")]
     UnexpectedEndOfInput(String),
