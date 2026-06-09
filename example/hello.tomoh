@@ -1,0 +1,6 @@
+module hello;
+
+use std.io;
+
+fn __4f9f2cab__hello_say(text: string) -> string;
+fn __4f9f2cab__hello_main(): i32;

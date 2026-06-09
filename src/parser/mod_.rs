@@ -1,3 +1,4 @@
+/*
 use std::iter::Peekable;
 
 use crate::error::{Error, Result};
@@ -80,7 +81,7 @@ impl<'a> Parser<'a> {
         self.expect_symbol(Token::Colon)?;
         let return_type = self.parse_type()?;
         let block = if self.tokens.peek() == Some(&Token::OpenSquirrely) {
-            Some(Block::parse(&mut self))
+            None
         } else {
             None
         };
@@ -98,6 +99,14 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> Result<Expression<'a>> {
         todo!()
+    }
+}
+
+impl<'a> Iterator for Parser<'a> {
+    type Item = Token<'a>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        self.tokens.next()
     }
 }
 
@@ -130,7 +139,7 @@ pub struct Arg<'a> {
 impl<'a> Arg<'a> {
     fn parse_args(parser: &mut Parser) -> Result<Vec<Self>> {
         let mut parens = 0;
-        let args_tokens = parser.tokens.by_ref().take_while(|t| {
+        let args_tokens = parser.by_ref().take_while(|t| {
             parens += match t {
                 Token::OpenParen => 1,
                 Token::CloseParen => -1,
@@ -142,7 +151,7 @@ impl<'a> Arg<'a> {
         while args_tokens.peek().is_some() {
             let id = parser.chomp_id()?;
             parser.expect_symbol(Token::Colon)?;
-            let type_ = Type::parse(parser)
+            let type_ = parser.parse_type();
         }
         Ok(args)
     }
@@ -178,6 +187,12 @@ impl<'a> From<&'a str> for Identifier<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Type<'a> {
     NamedType(Identifier<'a>),
+}
+
+impl<'a> Type<'a> {
+    fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        todo!()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -1353,4 +1368,4 @@ mod tests {
         );
     }
 }
-*/
+*/*/

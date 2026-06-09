@@ -32,6 +32,12 @@ pub enum Token<'a> {
     Number(&'a str),
 }
 
+impl<'a> Token<'a> {
+    pub fn is_same_kind(&self, token: &Token<'a>) -> bool {
+        return std::mem::discriminant(self) == std::mem::discriminant(token);
+    }
+}
+
 #[derive(Debug)]
 pub struct Lexer<'a> {
     source: &'a str,

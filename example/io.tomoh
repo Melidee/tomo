@@ -1,0 +1,13 @@
+module std.io; // fea20e18
+
+include "<stdio.h>";
+
+fn __fea20e18_std_io__Println(text: string);
+fn __fea20e18_std_io__Print(text: string);
+
+fn __fea20e18_std_io__Input(read_to: []string): error;
+fn __fea20e18_std_io__
+
+type __fea20e18_std_io__Error struct {
+    message: const:string,
+}

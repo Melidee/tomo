@@ -1,0 +1,8 @@
+module std.prelude;
+
+/// strings are fat pointers to u8 (char),
+type String struct {
+    ptr: *u8,
+    length: usize,
+};
+

@@ -1,0 +1,51 @@
+module string;
+
+include "stdio.h";
+
+/**
+ * A simple string type that manages its own memory.
+ * This implementation provides basic functionality for creating, formatting, 
+ * and appending strings. This string allocates length+1 memory, allowing for
+ * a null terminator, which is useful for interoperability with C functions 
+ * that expect null-terminated strings.
+ */
+type String struct {
+    data *u8
+    length usize
+}
+
+fn String.new(data: *u8, length: usize): String {
+    let str: String;
+    str.data = data;
+    str.length = length;
+    return str;
+}
+
+fn String.empty(): String {
+    return String.new(allocate(1), 0);
+}
+
+fn String.free(self) {
+    free(self.data);
+    self.length = 0;
+}
+
+fn String.format(format: String, ...args: any) {
+    let data: *u8 = NULL;
+    let length = vasprintf(data, args);
+    if length < 0 {
+        return String.empty();
+    }
+    return String.new(data, length);
+}
+
+fn String.append(self, other: String) {
+    let new_size: usize = self.length + other.length;
+    let new_data: *u8 = calloc(new_size + 1);
+    memcpy(new_data, self.data, self.length);
+    memcpy(new_data + self.length, other.data, other.length);
+    new_data[new_size] = 0; // Null-terminate the string
+    free(self.data);
+    self.data = new_data;
+    self.length = new_size;
+}

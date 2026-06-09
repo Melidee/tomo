@@ -1,0 +1,12 @@
+module std.io;
+include "<stdio.h>" as c_stdio;
+
+fn __fnv1a64__mod_name()
+
+fn __fea20e18__std_io_println(text: string) {
+    printf("%s\n", text)
+}
+
+fn __fea20e18__std_io_printf(text: string, ) {
+    printf()
+}

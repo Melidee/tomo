@@ -1,0 +1,19 @@
+module std.io;
+
+include "<stdio.h>" as c_stdio;
+
+fn Print(text: string) {
+    let cstr: *u8 = stack message.len + 1;
+    *cstr = text.ptr;
+    cstr[text.len] = '\0';
+    printf("%s", cstr);
+}
+
+fn Println(text: string) {
+    let c: *u8 = Cstr(text.ptr);
+    printf("%s\n", Cstr(text.ptr));
+}
+
+fn Printf(format: #string, args: ...) {
+    printf(format, args...);
+}

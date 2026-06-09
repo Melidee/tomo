@@ -1,6 +1,6 @@
 use std::{env, fs::read_to_string};
 
-use crate::{lexer::{Lexer, Token}, parser::parse};
+use crate::{lexer::{Lexer, Token}};
 
 mod lexer;
 mod parser;
@@ -14,6 +14,4 @@ fn main() {
     let source = read_to_string(source_file).expect("Failed to read source file");
     let tokens = Lexer::new(&source).collect::<Vec<Token>>();
     println!("{}", tokens.iter().map(|t| t.to_string()).collect::<Vec<String>>().join(" "));
-    let ast = parse(tokens);
-    println!("{:?}", ast);
 }

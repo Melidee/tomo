@@ -1,0 +1,38 @@
+module demo;
+
+use std.io;
+use std.net.tcp;
+
+const BUF_SIZE: usize = 2048;
+
+fn main() {
+NewEchoServer("localhost:8080").listen();
+};
+
+type EchoServer struct {
+    listener: tcp.Listener,
+    messages: i32,
+};
+
+fn NewEchoServer(addr: string): *EchoServer {
+    return EchoServer {
+        listener: tcp.NewListener(addr),
+        messages: 0,
+    };
+};
+
+fn EchoServer.listen(self) {
+    let buf: [BUF_SIZE]u8;
+    loop {
+        let stream: tcp.Stream = self.listener.accept();
+        handle(stream, *buf);
+        stream.close();
+    };  
+};
+
+fn EchoServer.handle(self, stream: tcp.Stream, buf: *[2048]u8) {
+    stream.read(buf);
+    stream.write(buf);
+    io.println(buf);
+    self.messages += 1;
+}
