@@ -205,11 +205,14 @@ impl<'a> Const<'a> {
         let id = parser.expect_identifier()?;
         parser.expect_symbol(Token::Colon)?;
         let mut type_tokens = parser.collect_until(Token::Equal);
-        let type_ = Type::parse(&mut type_tokens)?;
+        let type_ = Type::parse(&mut type_tokens).map_err(|err| match parser.next_expect() {
+            Ok(found) => err.swap_found(found.to_string()),
+            Err(error) => error,
+        })?;
         parser.expect_symbol(Token::Equal)?;
         let mut expr_tokens = parser.collect_until(Token::Semicolon);
-        let expression = Expression::parse(&mut expr_tokens)?;
         parser.expect_symbol(Token::Semicolon)?;
+        let expression = Expression::parse(&mut expr_tokens)?;
         Ok(Const {
             identifier: id,
             type_,
@@ -297,9 +300,12 @@ pub enum Type<'a> {
 
 impl<'a> Type<'a> {
     fn parse(tokens: &mut Parser<'a>) -> Result<Self> {
-        match tokens.next_expect()? {
+        match tokens
+            .next_expect()
+            .map_err(|_| Error::unexpected("type", ""))?
+        {
             Token::Identifier(id) => Ok(Self::Identifier(Identifier(id))),
-            _ => panic!("not a type")
+            _ => panic!("not a type"),
         }
     }
 }
@@ -324,15 +330,7 @@ impl<'a> Expression<'a> {
                     Some(_) => panic!("invalid token"),
                 })
             }
-            Token::Number(num) => {
-                if num.contains('.') {
-                    let float = num.parse::<f64>()?;
-                    Ok(Self::FloatLiteral(float))
-                } else {
-                    let int = num.parse::<u64>()?;
-                    Ok(Self::IntegerLiteral(int))
-                }
-            }
+            Token::Number(num) => Self::parse_number(num),
             Token::StringLiteral(string) => Ok(Self::StringLiteral(string)),
             _ => panic!("not an expression"),
         }
@@ -340,6 +338,16 @@ impl<'a> Expression<'a> {
 
     fn parse_call(parser: &mut Parser<'a>) -> Result<Self> {
         todo!()
+    }
+
+    fn parse_number(num: &str) -> Result<Self> {
+        if num.contains('.') {
+            let float = num.parse::<f64>()?;
+            Ok(Self::FloatLiteral(float))
+        } else {
+            let int = num.parse::<u64>()?;
+            Ok(Self::IntegerLiteral(int))
+        }
     }
 }
 
@@ -447,22 +455,148 @@ mod tests {
     }
 
     #[test]
-    fn parse_simple_const_expr() {
-        let mut parser = Parser::from_iter(vec![
-            Token::Const,
-            Token::Identifier("pi"),
-            Token::Colon,
-            Token::Identifier("f64"),
-            Token::Equal,
-            Token::Number("3.14"),
-            Token::Semicolon,
-        ].into_iter());
+    fn parse_const_expr_happy_path() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Colon,
+                Token::Identifier("f64"),
+                Token::Equal,
+                Token::Number("3.14"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
 
         let expected = Ok(Const {
             identifier: Identifier("pi"),
             type_: Type::Identifier(Identifier("f64")),
             expression: Expression::FloatLiteral(3.14),
         });
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_identifier() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Colon,
+                Token::Identifier("f64"),
+                Token::Equal,
+                Token::Number("3.14"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedToken(
+            "identifier".to_string(),
+            Token::Colon.to_string(),
+        ));
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_type_colon() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Identifier("f64"),
+                Token::Equal,
+                Token::Number("3.14"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedToken(
+            Token::Colon.to_string(),
+            Token::Identifier("f64").to_string(),
+        ));
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_type() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Colon,
+                Token::Equal,
+                Token::Number("3.14"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedToken(
+            "type".to_string(),
+            Token::Equal.to_string(),
+        ));
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_equal() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Colon,
+                Token::Identifier("f64"),
+                Token::Number("3.14"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedEndOfInput(Token::Equal.to_string()));
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_expression() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Colon,
+                Token::Identifier("f64"),
+                Token::Equal,
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedEndOfInput("token".to_string()));
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_const_fails_no_semicolon() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Const,
+                Token::Identifier("pi"),
+                Token::Colon,
+                Token::Identifier("f64"),
+                Token::Equal,
+                Token::Number("3.14"),
+            ]
+            .into_iter(),
+        );
+
+        let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
         let result = Const::parse(&mut parser);
         assert_eq!(expected, result);
     }
