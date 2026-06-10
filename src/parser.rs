@@ -374,4 +374,53 @@ mod tests {
         let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
         assert_eq!(expected, result)
     }
+
+    #[test]
+    fn parse_use_parses_simple_name() {
+        let mut parser = Parser::from_iter(
+            vec![Token::Use, Token::Identifier("hello"), Token::Semicolon].into_iter(),
+        );
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Ok(TopLevelAst::Use(Identifier("hello")));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_use_parses_complex_identifier() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Use,
+                Token::Identifier("hello.world_here"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Ok(TopLevelAst::Use(Identifier("hello.world_here")));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_use_fails_no_identifier() {
+        let mut parser = Parser::from_iter(vec![Token::Use, Token::Semicolon].into_iter());
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Err(Error::UnexpectedToken(
+            "identifier".to_string(),
+            Token::Semicolon.to_string(),
+        ));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_use_fails_no_semicolon_with_eoi() {
+        let mut parser =
+            Parser::from_iter(vec![Token::Use, Token::Identifier("hello")].into_iter());
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
+        assert_eq!(expected, result)
+    }
 }
