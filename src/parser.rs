@@ -379,7 +379,7 @@ mod tests {
     use std::vec;
 
     use super::*;
-    use crate::{error::Error::UnexpectedEndOfInput, lexer::Token, qbe::Arg};
+    use crate::lexer::Token;
 
     #[test]
     fn parse_module_parses_simple_name() {
