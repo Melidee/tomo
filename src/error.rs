@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum Error {
     #[error("expected {0:?} found {1}")]
     UnexpectedToken(String, String),

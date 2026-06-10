@@ -3,29 +3,22 @@ use std::iter::Peekable;
 
 use crate::{
     error::{Error, Result},
-    lexer::{Lexer, Token},
+    lexer::Token,
 };
 
-struct Parser<'a> {
+pub struct Parser<'a> {
     tokens: Peekable<Box<dyn Iterator<Item = Token<'a>> + 'a>>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(lexer: Lexer<'a>) -> Self {
-        let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(lexer);
-        Self {
-            tokens: boxed.peekable(),
-        }
-    }
-
-    fn from_iter<I: Iterator<Item = Token<'a>> + 'static>(iter: I) -> Self {
+    pub fn from_iter<I: Iterator<Item = Token<'a>> + 'static>(iter: I) -> Self {
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(iter);
         Self {
             tokens: boxed.peekable(),
         }
     }
 
-    fn parse_top_level(&mut self) -> Result<TopLevelAst<'a>> {
+    pub fn parse_top_level(&mut self) -> Result<TopLevelAst<'a>> {
         match self.peek_expect()? {
             Token::Module => {
                 self.expect_symbol(Token::Module)?;
@@ -60,7 +53,22 @@ impl<'a> Parser<'a> {
             .ok_or(Error::UnexpectedEndOfInput("token".to_string()))
     }
 
-    fn expect_symbol(&mut self, symbol: Token<'a>) -> Result<()> {
+    /// Expects a certain symbol to come next in the parser tokens, returning an
+    /// error if there are no more tokens, or if the found token does not match 
+    /// the expected symbol. This consumes the next value of the iterator.
+    /// 
+    /// ### Examples
+    /// 
+    /// ```rs
+    /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
+    /// 
+    /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
+    /// assert_eq!(
+    ///     parser.expect_symbol(Token::Comma).unwrap_err(), 
+    ///     Error::UnexpectedToken(Token::Comma.to_string(), Token::CloseParen.to_string())
+    /// );
+    /// ```
+    pub fn expect_symbol(&mut self, symbol: Token<'a>) -> Result<()> {
         let next_expect = self.next_expect()?;
         if symbol == next_expect {
             Ok(())
@@ -72,6 +80,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expects the next token of the parser to be an identifier, returning an
+    /// error if there are no more tokens, or if the found token is not an  
+    /// identifier. This consumes the next value of the iterator. The returned
+    /// type is a parser::Identifier, as that is usually what a Token::Identifier
+    /// will be converted to.
+    /// 
+    /// ### Examples
+    /// 
+    /// ```rs
+    /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
+    /// 
+    /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
+    /// assert_eq!(
+    ///     parser.expect_symbol(Token::Comma).unwrap_err(), 
+    ///     Error::UnexpectedToken(Token::Comma.to_string(), Token::CloseParen.to_string())
+    /// );
+    /// ```
     fn expect_identifier(&mut self) -> Result<Identifier<'a>> {
         match self.next_expect()? {
             Token::Identifier(id) => Ok(Identifier(id)),
@@ -83,7 +108,11 @@ impl<'a> Parser<'a> {
     }
 
     fn collect_until(&mut self, token: Token<'a>) -> Parser<'a> {
-        let collected = self.tokens.by_ref().peeking_take_while(move |t| *t != token).collect::<Vec<Token<'a>>>();
+        let collected = self
+            .tokens
+            .by_ref()
+            .peeking_take_while(move |t| *t != token)
+            .collect::<Vec<Token<'a>>>();
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(collected.into_iter());
         Self {
             tokens: boxed.peekable(),
@@ -100,14 +129,18 @@ impl<'a> Parser<'a> {
             ),
         };
         let mut depth = 1;
-        let collected = self.tokens.by_ref().peeking_take_while(move |t| {
-            if t == &opening_token {
-                depth += 1;
-            } else if *t == closing_token {
-                depth -= 1;
-            }
-            depth == 0
-        }).collect::<Vec<Token<'a>>>();
+        let collected = self
+            .tokens
+            .by_ref()
+            .peeking_take_while(move |t| {
+                if t == &opening_token {
+                    depth += 1;
+                } else if *t == closing_token {
+                    depth -= 1;
+                }
+                depth == 0
+            })
+            .collect::<Vec<Token<'a>>>();
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(collected.into_iter());
         Self {
             tokens: boxed.peekable(),
