@@ -38,7 +38,7 @@ impl<'a> Token<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lexer<'a> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,

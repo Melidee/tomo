@@ -11,42 +11,23 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn from_iter<I: Iterator<Item = Token<'a>> + 'static>(iter: I) -> Self {
+    pub fn from_iter<I: Iterator<Item = Token<'a>> + 'a>(iter: I) -> Self {
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(iter);
         Self {
             tokens: boxed.peekable(),
         }
     }
 
-    pub fn parse_top_level(&mut self) -> Result<TopLevelAst<'a>> {
-        match self.peek_expect()? {
-            Token::Module => {
-                self.expect_symbol(Token::Module)?;
-                let id = self.expect_identifier()?;
-                self.expect_symbol(Token::Semicolon)?;
-                Ok(TopLevelAst::Module(id))
-            }
-            Token::Use => {
-                self.expect_symbol(Token::Use)?;
-                let id = self.expect_identifier()?;
-                self.expect_symbol(Token::Semicolon)?;
-                Ok(TopLevelAst::Use(id))
-            }
-            Token::Const => Ok(TopLevelAst::Const(Const::parse(self)?)),
-            Token::Fn => Ok(TopLevelAst::Fn(Function::parse(self)?)),
-            found => Err(Error::UnexpectedToken(
-                "one of `module`, `use`, `const`, or `fn`".to_string(),
-                found.to_string(),
-            )),
-        }
-    }
-
+    /// Peeks the next token in the parser, returning an UnexpectedEndOfInput
+    /// error if one is not found.
     fn peek_expect(&mut self) -> Result<&Token<'a>> {
         self.tokens
             .peek()
             .ok_or(Error::UnexpectedEndOfInput("token".to_string()))
     }
 
+    /// Takes the next token in the parser, returning an UnexpectedEndOfInput
+    /// error if one is not found.
     fn next_expect(&mut self) -> Result<Token<'a>> {
         self.tokens
             .next()
@@ -54,22 +35,25 @@ impl<'a> Parser<'a> {
     }
 
     /// Expects a certain symbol to come next in the parser tokens, returning an
-    /// error if there are no more tokens, or if the found token does not match 
+    /// error if there are no more tokens, or if the found token does not match
     /// the expected symbol. This consumes the next value of the iterator.
-    /// 
+    ///
     /// ### Examples
-    /// 
+    ///
     /// ```rs
     /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
-    /// 
+    ///
     /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
     /// assert_eq!(
-    ///     parser.expect_symbol(Token::Comma).unwrap_err(), 
+    ///     parser.expect_symbol(Token::Comma).unwrap_err(),
     ///     Error::UnexpectedToken(Token::Comma.to_string(), Token::CloseParen.to_string())
     /// );
     /// ```
     pub fn expect_symbol(&mut self, symbol: Token<'a>) -> Result<()> {
-        let next_expect = self.next_expect()?;
+        let next_expect = self
+            .tokens
+            .next()
+            .ok_or(Error::UnexpectedEndOfInput(symbol.to_string()))?;
         if symbol == next_expect {
             Ok(())
         } else {
@@ -81,19 +65,19 @@ impl<'a> Parser<'a> {
     }
 
     /// Expects the next token of the parser to be an identifier, returning an
-    /// error if there are no more tokens, or if the found token is not an  
+    /// error if there are no more tokens, or if the found token is not an
     /// identifier. This consumes the next value of the iterator. The returned
     /// type is a parser::Identifier, as that is usually what a Token::Identifier
     /// will be converted to.
-    /// 
+    ///
     /// ### Examples
-    /// 
+    ///
     /// ```rs
     /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
-    /// 
+    ///
     /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
     /// assert_eq!(
-    ///     parser.expect_symbol(Token::Comma).unwrap_err(), 
+    ///     parser.expect_symbol(Token::Comma).unwrap_err(),
     ///     Error::UnexpectedToken(Token::Comma.to_string(), Token::CloseParen.to_string())
     /// );
     /// ```
@@ -107,6 +91,30 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consumes tokens into a new parser until peeking a specific token. This
+    /// does *not consume* the separating token.
+    ///
+    /// ### Examples
+    ///
+    /// ```rs
+    /// let mut parser = Parser::from_iter(vec![
+    ///     Token::Identifier("x"),
+    ///     Token::Plus,
+    ///     Token::Identifier("y"),
+    ///     Token::Semicolon,
+    ///     Token::Identifier("z"),
+    /// ].into_iter());
+    ///
+    /// let mut  expr_tokens = parser.collect_until(Token::Semicolon);
+    /// // collected tokens contain the symbols before the semicolon
+    /// expr_tokens.expect_identifier().expect("next is identifier");
+    /// expr_tokens.expect_symbol(Token::Plus).expect("next is semicolon");
+    /// expr_tokens.expect_identifier().expect("next is identifier");
+    ///
+    /// // original parser contains tokens after the separator
+    /// parser.expect_symbol(Token::Semicolon).expect("next is semicolon");
+    /// parser.expect_identifier().expect("next is identifier");
+    /// ```
     fn collect_until(&mut self, token: Token<'a>) -> Parser<'a> {
         let collected = self
             .tokens
@@ -148,6 +156,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum TopLevelAst<'a> {
     Module(Identifier<'a>),
     Use(Identifier<'a>),
@@ -155,8 +164,35 @@ pub enum TopLevelAst<'a> {
     Fn(Function<'a>),
 }
 
+impl<'a> TopLevelAst<'a> {
+    pub fn parse(parser: &mut Parser<'a>) -> Result<TopLevelAst<'a>> {
+        match parser.peek_expect()? {
+            Token::Module => {
+                parser.expect_symbol(Token::Module)?;
+                let id = parser.expect_identifier()?;
+                parser.expect_symbol(Token::Semicolon)?;
+                Ok(TopLevelAst::Module(id))
+            }
+            Token::Use => {
+                parser.expect_symbol(Token::Use)?;
+                let id = parser.expect_identifier()?;
+                parser.expect_symbol(Token::Semicolon)?;
+                Ok(TopLevelAst::Use(id))
+            }
+            Token::Const => Ok(TopLevelAst::Const(Const::parse(parser)?)),
+            Token::Fn => Ok(TopLevelAst::Fn(Function::parse(parser)?)),
+            found => Err(Error::UnexpectedToken(
+                "one of `module`, `use`, `const`, or `fn`".to_string(),
+                found.to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Identifier<'a>(&'a str);
 
+#[derive(Debug, PartialEq)]
 struct Const<'a> {
     identifier: Identifier<'a>,
     type_: Type<'a>,
@@ -182,6 +218,7 @@ impl<'a> Const<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Function<'a> {
     identifier: Identifier<'a>,
     args: Vec<DefArg<'a>>,
@@ -210,6 +247,7 @@ impl<'a> Function<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct DefArg<'a> {
     identifier: Identifier<'a>,
     type_: Type<'a>,
@@ -235,6 +273,7 @@ impl<'a> DefArg<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Block<'a> {
     statements: Vec<Statement<'a>>,
 }
@@ -245,11 +284,13 @@ impl<'a> Block<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum Statement<'a> {
     Expression(Expression<'a>),
     Return(Expression<'a>),
 }
 
+#[derive(Debug, PartialEq)]
 enum Type<'a> {
     Identifier(Identifier<'a>),
 }
@@ -260,6 +301,7 @@ impl<'a> Type<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum Expression<'a> {
     Identifier(Identifier<'a>),
     Call(Identifier<'a>, Vec<Expression<'a>>),
@@ -272,8 +314,64 @@ impl<'a> Expression<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum Literal<'a> {
     String(&'a str),
     Integer(i128),
     Float(f64),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Token;
+
+    #[test]
+    fn parse_module_parses_simple_name() {
+        let mut parser = Parser::from_iter(
+            vec![Token::Module, Token::Identifier("hello"), Token::Semicolon].into_iter(),
+        );
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Ok(TopLevelAst::Module(Identifier("hello")));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_module_parses_complex_identifier() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Module,
+                Token::Identifier("hello.world_here"),
+                Token::Semicolon,
+            ]
+            .into_iter(),
+        );
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Ok(TopLevelAst::Module(Identifier("hello.world_here")));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_module_fails_no_identifier() {
+        let mut parser = Parser::from_iter(vec![Token::Module, Token::Semicolon].into_iter());
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Err(Error::UnexpectedToken(
+            "identifier".to_string(),
+            Token::Semicolon.to_string(),
+        ));
+        assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_module_fails_no_semicolon_with_eoi() {
+        let mut parser =
+            Parser::from_iter(vec![Token::Module, Token::Identifier("hello")].into_iter());
+
+        let result = TopLevelAst::parse(&mut parser);
+        let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
+        assert_eq!(expected, result)
+    }
 }
