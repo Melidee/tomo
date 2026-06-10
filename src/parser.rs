@@ -193,7 +193,7 @@ impl<'a> TopLevelAst<'a> {
 pub struct Identifier<'a>(&'a str);
 
 #[derive(Debug, PartialEq)]
-struct Const<'a> {
+pub struct Const<'a> {
     identifier: Identifier<'a>,
     type_: Type<'a>,
     expression: Expression<'a>,
@@ -291,7 +291,7 @@ enum Statement<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-enum Type<'a> {
+pub enum Type<'a> {
     Identifier(Identifier<'a>),
 }
 
@@ -302,7 +302,7 @@ impl<'a> Type<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-enum Expression<'a> {
+pub enum Expression<'a> {
     Identifier(Identifier<'a>),
     Call(Identifier<'a>, Vec<Expression<'a>>),
     Literal(Literal<'a>),
@@ -422,5 +422,26 @@ mod tests {
         let result = TopLevelAst::parse(&mut parser);
         let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
         assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn parse_simple_const_expr() {
+        let mut parser = Parser::from_iter(vec![
+            Token::Const,
+            Token::Identifier("pi"),
+            Token::Colon,
+            Token::Identifier("f64"),
+            Token::Equal,
+            Token::Number("3.14"),
+            Token::Semicolon,
+        ].into_iter());
+
+        let expected = Ok(Const {
+            identifier: Identifier("pi"),
+            type_: Type::Identifier(Identifier("f64")),
+            expression: Expression::Literal(Literal::Float(3.14)),
+        });
+        let result = Const::parse(&mut parser);
+        assert_eq!(expected, result);
     }
 }
