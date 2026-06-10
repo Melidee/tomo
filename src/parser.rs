@@ -1,3 +1,4 @@
+use peeking_take_while::PeekableExt;
 use std::iter::Peekable;
 
 use crate::{
@@ -12,6 +13,13 @@ struct Parser<'a> {
 impl<'a> Parser<'a> {
     fn new(lexer: Lexer<'a>) -> Self {
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(lexer);
+        Self {
+            tokens: boxed.peekable(),
+        }
+    }
+
+    fn from_iter<I: Iterator<Item = Token<'a>> + 'static>(iter: I) -> Self {
+        let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(iter);
         Self {
             tokens: boxed.peekable(),
         }
@@ -32,6 +40,7 @@ impl<'a> Parser<'a> {
                 Ok(TopLevelAst::Use(id))
             }
             Token::Const => Ok(TopLevelAst::Const(Const::parse(self)?)),
+            Token::Fn => Ok(TopLevelAst::Fn(Function::parse(self)?)),
             found => Err(Error::UnexpectedToken(
                 "one of `module`, `use`, `const`, or `fn`".to_string(),
                 found.to_string(),
@@ -73,8 +82,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn collect_until(&mut self, token: &Token<'a>) -> Vec<Token<'a>> {
-        self.tokens.by_ref().take_while(|t| t != token).collect()
+    fn collect_until(&mut self, token: Token<'a>) -> Parser<'a> {
+        let collected = self.tokens.by_ref().peeking_take_while(move |t| *t != token).collect::<Vec<Token<'a>>>();
+        let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(collected.into_iter());
+        Self {
+            tokens: boxed.peekable(),
+        }
+    }
+
+    fn collect_until_closing(&mut self, closing_token: Token<'a>) -> Parser<'a> {
+        let opening_token = match closing_token {
+            Token::CloseBracket => Token::OpenBracket,
+            Token::CloseParen => Token::OpenParen,
+            Token::CloseSquirrely => Token::OpenSquirrely,
+            _ => panic!(
+                "collect_until_closing is only for symbols with a matching closing pair, use collect_until instead"
+            ),
+        };
+        let mut depth = 1;
+        let collected = self.tokens.by_ref().peeking_take_while(move |t| {
+            if t == &opening_token {
+                depth += 1;
+            } else if *t == closing_token {
+                depth -= 1;
+            }
+            depth == 0
+        }).collect::<Vec<Token<'a>>>();
+        let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(collected.into_iter());
+        Self {
+            tokens: boxed.peekable(),
+        }
     }
 }
 
@@ -98,10 +135,12 @@ impl<'a> Const<'a> {
         parser.expect_symbol(Token::Const)?;
         let id = parser.expect_identifier()?;
         parser.expect_symbol(Token::Colon)?;
-        let type_tokens = parser.collect_until(&Token::Equal);
-        let type_ = Type::parse(type_tokens)?;
-        let expr_tokens = parser.collect_until(&Token::Semicolon);
-        let expression = Expression::parse(expr_tokens)?;
+        let mut type_tokens = parser.collect_until(Token::Equal);
+        let type_ = Type::parse(&mut type_tokens)?;
+        parser.expect_symbol(Token::Equal)?;
+        let mut expr_tokens = parser.collect_until(Token::Semicolon);
+        let expression = Expression::parse(&mut expr_tokens)?;
+        parser.expect_symbol(Token::Semicolon)?;
         Ok(Const {
             identifier: id,
             type_,
@@ -117,13 +156,60 @@ struct Function<'a> {
     block: Block<'a>,
 }
 
+impl<'a> Function<'a> {
+    fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        parser.expect_symbol(Token::Fn)?;
+        let identifier = parser.expect_identifier()?;
+        let args = DefArg::parse_args(parser)?;
+        parser.expect_symbol(Token::Colon)?;
+        let mut type_tokens = parser.collect_until(Token::OpenSquirrely);
+        let return_type = Type::parse(&mut type_tokens)?;
+        parser.expect_symbol(Token::OpenSquirrely)?;
+        let mut block_tokens = parser.collect_until(Token::CloseSquirrely);
+        let block = Block::parse_body(&mut block_tokens)?;
+        parser.expect_symbol(Token::CloseSquirrely)?;
+        Ok(Self {
+            identifier,
+            args,
+            return_type,
+            block,
+        })
+    }
+}
+
 struct DefArg<'a> {
     identifier: Identifier<'a>,
     type_: Type<'a>,
 }
 
+impl<'a> DefArg<'a> {
+    fn parse_args(parser: &mut Parser<'a>) -> Result<Vec<Self>> {
+        parser.expect_symbol(Token::OpenParen)?;
+        let mut args_tokens = parser.collect_until_closing(Token::OpenParen);
+        let mut args = vec![];
+        while args_tokens.tokens.peek().is_some() {
+            let mut arg_tokens = args_tokens.collect_until(Token::Comma);
+            args.push(Self::parse(&mut arg_tokens));
+        }
+        args.into_iter().collect() // Vec<Result<T>> -> Result<Vec<T>>
+    }
+
+    fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        let identifier = parser.expect_identifier()?;
+        parser.expect_symbol(Token::Colon)?;
+        let type_ = Type::parse(parser)?;
+        Ok(Self { identifier, type_ })
+    }
+}
+
 struct Block<'a> {
     statements: Vec<Statement<'a>>,
+}
+
+impl<'a> Block<'a> {
+    fn parse_body(tokens: &mut Parser<'a>) -> Result<Self> {
+        todo!()
+    }
 }
 
 enum Statement<'a> {
@@ -136,7 +222,7 @@ enum Type<'a> {
 }
 
 impl<'a> Type<'a> {
-    fn parse(tokens: Vec<Token<'a>>) -> Result<Self> {
+    fn parse(tokens: &mut Parser<'a>) -> Result<Self> {
         todo!()
     }
 }
@@ -148,7 +234,7 @@ enum Expression<'a> {
 }
 
 impl<'a> Expression<'a> {
-    fn parse(expr_tokens: Vec<Token<'a>>) -> Result<Self> {
+    fn parse(expr_tokens: &mut Parser<'a>) -> Result<Self> {
         todo!()
     }
 }
