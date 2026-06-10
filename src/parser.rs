@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
                 } else if *t == closing_token {
                     depth -= 1;
                 }
-                depth == 0
+                depth != 0
             })
             .collect::<Vec<Token<'a>>>();
         let boxed: Box<dyn Iterator<Item = Token<'a>> + 'a> = Box::new(collected.into_iter());
@@ -265,6 +265,7 @@ impl<'a> DefArg<'a> {
             let mut arg_tokens = args_tokens.collect_until(Token::Comma);
             args.push(Self::parse(&mut arg_tokens));
         }
+        parser.expect_symbol(Token::CloseParen);
         args.into_iter().collect() // Vec<Result<T>> -> Result<Vec<T>>
     }
 
@@ -282,8 +283,12 @@ struct Block<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn parse_body(tokens: &mut Parser<'a>) -> Result<Self> {
-        todo!()
+    fn parse_body(parser: &mut Parser<'a>) -> Result<Self> {
+        let mut statements = vec![];
+        while parser.tokens.peek().is_some() {
+            statements.push(Statement::parse(parser)?);
+        }
+        Ok(Self { statements })
     }
 }
 
@@ -291,6 +296,24 @@ impl<'a> Block<'a> {
 enum Statement<'a> {
     Expression(Expression<'a>),
     Return(Expression<'a>),
+}
+
+impl<'a> Statement<'a> {
+    fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        let mut statement_tokens = parser.collect_until(Token::Semicolon);
+        let statement = match statement_tokens.peek_expect()? {
+            Token::Return => {
+                statement_tokens.expect_symbol(Token::Return)?;
+                Ok(Self::Return(Expression::parse(&mut statement_tokens)?))
+            }
+            Token::StringLiteral(_) | Token::Number(_) | Token::Identifier(_) => {
+                Ok(Self::Expression(Expression::parse(&mut statement_tokens)?))
+            }
+            found => Err(Error::unexpected("statement", found.to_string())),
+        };
+        parser.expect_symbol(Token::Semicolon)?;
+        statement
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -305,7 +328,7 @@ impl<'a> Type<'a> {
             .map_err(|_| Error::unexpected("type", ""))?
         {
             Token::Identifier(id) => Ok(Self::Identifier(Identifier(id))),
-            _ => panic!("not a type"),
+            other => Err(Error::unexpected("type", other.to_string())),
         }
     }
 }
@@ -332,7 +355,7 @@ impl<'a> Expression<'a> {
             }
             Token::Number(num) => Self::parse_number(num),
             Token::StringLiteral(string) => Ok(Self::StringLiteral(string)),
-            _ => panic!("not an expression"),
+            expr => panic!("not an expression {}", expr),
         }
     }
 
@@ -355,7 +378,7 @@ impl<'a> Expression<'a> {
 mod tests {
     use std::vec;
 
-use super::*;
+    use super::*;
     use crate::{error::Error::UnexpectedEndOfInput, lexer::Token, qbe::Arg};
 
     #[test]
@@ -605,22 +628,25 @@ use super::*;
 
     #[test]
     fn parse_function_happy_path() {
-        let mut parser = Parser::from_iter(vec![
-            Token::Fn,
-            Token::Identifier("my_func"),
-            Token::OpenParen,
-            Token::Identifier("x"),
-            Token::Colon,
-            Token::Identifier("i32"),
-            Token::CloseParen,
-            Token::Colon,
-            Token::Identifier("i32"),
-            Token::OpenSquirrely,
-            Token::Return,
-            Token::Identifier("x"),
-            Token::Semicolon,
-            Token::CloseSquirrely,
-        ].into_iter());
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Fn,
+                Token::Identifier("my_func"),
+                Token::OpenParen,
+                Token::Identifier("x"),
+                Token::Colon,
+                Token::Identifier("i32"),
+                Token::CloseParen,
+                Token::Colon,
+                Token::Identifier("i32"),
+                Token::OpenSquirrely,
+                Token::Return,
+                Token::Identifier("x"),
+                Token::Semicolon,
+                Token::CloseSquirrely,
+            ]
+            .into_iter(),
+        );
 
         let expected = Ok(Function {
             identifier: Identifier("my_func"),
@@ -629,9 +655,9 @@ use super::*;
                 type_: Type::Identifier(Identifier("i32")),
             }],
             return_type: Type::Identifier(Identifier("i32")),
-            block: Block { statements: vec![
-                Statement::Return(Expression::Identifier(Identifier("x"))),
-            ]}
+            block: Block {
+                statements: vec![Statement::Return(Expression::Identifier(Identifier("x")))],
+            },
         });
         let result = Function::parse(&mut parser);
         assert_eq!(expected, result)
