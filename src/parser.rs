@@ -297,7 +297,10 @@ pub enum Type<'a> {
 
 impl<'a> Type<'a> {
     fn parse(tokens: &mut Parser<'a>) -> Result<Self> {
-        todo!()
+        match tokens.next_expect()? {
+            Token::Identifier(id) => Ok(Self::Identifier(Identifier(id))),
+            _ => panic!("not a type")
+        }
     }
 }
 
