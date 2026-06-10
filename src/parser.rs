@@ -223,10 +223,10 @@ impl<'a> Const<'a> {
 
 #[derive(Debug, PartialEq)]
 struct Function<'a> {
-    identifier: Identifier<'a>,
-    args: Vec<DefArg<'a>>,
-    return_type: Type<'a>,
-    block: Block<'a>,
+    pub identifier: Identifier<'a>,
+    pub args: Vec<DefArg<'a>>,
+    pub return_type: Type<'a>,
+    pub block: Block<'a>,
 }
 
 impl<'a> Function<'a> {
@@ -252,14 +252,14 @@ impl<'a> Function<'a> {
 
 #[derive(Debug, PartialEq)]
 struct DefArg<'a> {
-    identifier: Identifier<'a>,
-    type_: Type<'a>,
+    pub identifier: Identifier<'a>,
+    pub type_: Type<'a>,
 }
 
 impl<'a> DefArg<'a> {
     fn parse_args(parser: &mut Parser<'a>) -> Result<Vec<Self>> {
         parser.expect_symbol(Token::OpenParen)?;
-        let mut args_tokens = parser.collect_until_closing(Token::OpenParen);
+        let mut args_tokens = parser.collect_until_closing(Token::CloseParen);
         let mut args = vec![];
         while args_tokens.tokens.peek().is_some() {
             let mut arg_tokens = args_tokens.collect_until(Token::Comma);
@@ -353,8 +353,10 @@ impl<'a> Expression<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::lexer::Token;
+    use std::vec;
+
+use super::*;
+    use crate::{error::Error::UnexpectedEndOfInput, lexer::Token, qbe::Arg};
 
     #[test]
     fn parse_module_parses_simple_name() {
@@ -599,5 +601,39 @@ mod tests {
         let expected = Err(Error::UnexpectedEndOfInput(Token::Semicolon.to_string()));
         let result = Const::parse(&mut parser);
         assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn parse_function_happy_path() {
+        let mut parser = Parser::from_iter(vec![
+            Token::Fn,
+            Token::Identifier("my_func"),
+            Token::OpenParen,
+            Token::Identifier("x"),
+            Token::Colon,
+            Token::Identifier("i32"),
+            Token::CloseParen,
+            Token::Colon,
+            Token::Identifier("i32"),
+            Token::OpenSquirrely,
+            Token::Return,
+            Token::Identifier("x"),
+            Token::Semicolon,
+            Token::CloseSquirrely,
+        ].into_iter());
+
+        let expected = Ok(Function {
+            identifier: Identifier("my_func"),
+            args: vec![DefArg {
+                identifier: Identifier("x"),
+                type_: Type::Identifier(Identifier("i32")),
+            }],
+            return_type: Type::Identifier(Identifier("i32")),
+            block: Block { statements: vec![
+                Statement::Return(Expression::Identifier(Identifier("x"))),
+            ]}
+        });
+        let result = Function::parse(&mut parser);
+        assert_eq!(expected, result)
     }
 }
