@@ -305,20 +305,39 @@ impl<'a> Type<'a> {
 pub enum Expression<'a> {
     Identifier(Identifier<'a>),
     Call(Identifier<'a>, Vec<Expression<'a>>),
-    Literal(Literal<'a>),
+    StringLiteral(&'a str),
+    IntegerLiteral(u64),
+    FloatLiteral(f64),
 }
 
 impl<'a> Expression<'a> {
-    fn parse(expr_tokens: &mut Parser<'a>) -> Result<Self> {
+    fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        match parser.peek_expect()? {
+            Token::Identifier(_) => {
+                let id = parser.expect_identifier()?;
+                Ok(match parser.tokens.peek() {
+                    Some(Token::OpenParen) => Self::parse_call(parser)?,
+                    None => Self::Identifier(id),
+                    Some(_) => panic!("invalid token"),
+                })
+            }
+            Token::Number(num) => {
+                if num.contains('.') {
+                    let float = num.parse::<f64>()?;
+                    Ok(Self::FloatLiteral(float))
+                } else {
+                    let int = num.parse::<u64>()?;
+                    Ok(Self::IntegerLiteral(int))
+                }
+            }
+            Token::StringLiteral(string) => Ok(Self::StringLiteral(string)),
+            _ => panic!("not an expression"),
+        }
+    }
+
+    fn parse_call(parser: &mut Parser<'a>) -> Result<Self> {
         todo!()
     }
-}
-
-#[derive(Debug, PartialEq)]
-enum Literal<'a> {
-    String(&'a str),
-    Integer(i128),
-    Float(f64),
 }
 
 #[cfg(test)]
@@ -439,7 +458,7 @@ mod tests {
         let expected = Ok(Const {
             identifier: Identifier("pi"),
             type_: Type::Identifier(Identifier("f64")),
-            expression: Expression::Literal(Literal::Float(3.14)),
+            expression: Expression::FloatLiteral(3.14),
         });
         let result = Const::parse(&mut parser);
         assert_eq!(expected, result);
