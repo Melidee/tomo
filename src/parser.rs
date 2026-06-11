@@ -353,15 +353,14 @@ pub enum Expression<'a> {
 
 impl<'a> Expression<'a> {
     fn parse(parser: &mut Parser<'a>) -> Result<Self> {
-        let mut tokens = vec![];
-        while let Some(token) = parser.tokens.next() {
-            tokens.push(token);
-        }
-        match parser.peek_expect()? {
+        let tokens = parser.tokens.by_ref().collect::<Vec<Token<'_>>>();
+        if tokens.iter().any(|t| Operator::from_token(t).is_ok()) {}
+        let mut expr_parser = Parser::from_iter(tokens.into_iter());
+        match expr_parser.peek_expect()? {
             Token::Identifier(_) => {
-                let id = parser.expect_identifier()?;
-                Ok(match parser.tokens.peek() {
-                    Some(Token::OpenParen) => Self::parse_call(parser)?,
+                let id = expr_parser.expect_identifier()?;
+                Ok(match expr_parser.tokens.peek() {
+                    Some(Token::OpenParen) => Self::parse_call(&mut expr_parser)?,
                     None => Self::Identifier(id),
                     Some(_) => panic!("invalid token"),
                 })
@@ -372,9 +371,61 @@ impl<'a> Expression<'a> {
         }
     }
 
-    fn parse_operators(tokens: &[Token<'a>]) -> Result<Self> {
-        tokens.split(|t| matches!(t, Token::Plus | Token::Minus | Token::Star | Token::Slash));
+    fn parse_operator_expression(tokens: Vec<Token<'a>>) -> Result<Self> {
+        let mut expr_parser = Parser::from_iter(tokens.into_iter());
+        let parts = ExpressionPart::split_expression(&mut expr_parser)?;
+        let infix_expr = Self::parse_prefix_operators(parts)?;
         todo!()
+    }
+
+    fn parse_prefix_operators(parts: Vec<ExpressionPart<'a>>) -> Result<Vec<ExpressionPart<'a>>> {
+        let mut parts_iter = parts.into_iter().peekable();
+        let mut new_parts = vec![];
+        while let Some(part) = parts_iter.next() {
+            if !matches!(part, Operand(_))
+                && matches!(parts_iter.peek(), Some(ExpressionPart::Operator(_)))
+            {
+                let prefix_expr = parts_iter
+                    .by_ref()
+                    .peeking_take_while(|p| matches!(p, ExpressionPart::Operator(_)))
+                    .collect();
+                new_parts.push(ExpressionPart::Expression(Self::parse_prefix(prefix_expr)?));
+            } else {
+                new_parts.push(part);
+            }
+        }
+        Ok(new_parts)
+    }
+
+    fn parse_prefix(mut expr: Vec<ExpressionPart<'a>>) -> Result<Expression> {
+        if expr.len() == 2 {
+            if let ExpressionPart::Operator(operator) = expr.remove(0)
+                && let ExpressionPart::Operand(operand) = expr.remove(0)
+            {
+                let operand_expr = Self::parse(&mut Parser::from_iter(operand.into_iter()))?;
+                Ok(Expression::Infix(operator, Box::new(operand_expr)))
+            } else {
+                Err(Error::unexpected(
+                    "prefix operator followed by operand",
+                    format!("{:?} {:?}", expr[0], expr[1]),
+                ))
+            }
+        } else if expr.len() > 2 {
+            if let ExpressionPart::Operator(operator) = expr.remove(0) {
+                let operand_expr = Self::parse_prefix(expr)?;
+                Ok(Expression::Infix(operator, Box::new(operand_expr)))
+            } else {
+                Err(Error::unexpected(
+                    "prefix operator followed by operand",
+                    format!("{:?}", expr[0]),
+                ))
+            }
+        } else {
+            Err(Error::unexpected(
+                "prefix operator followed by operand",
+                "empty expression".to_string(),
+            ))
+        }
     }
 
     fn parse_call(parser: &mut Parser<'a>) -> Result<Self> {
@@ -398,6 +449,7 @@ pub enum ExpressionPart<'a> {
     CloseParen,
     Operator(Operator),
     Operand(Vec<Token<'a>>),
+    Expression(Expression<'a>),
 }
 
 impl<'a> ExpressionPart<'a> {
@@ -781,7 +833,10 @@ mod tests {
         let mut parser = Parser::from_iter(vec![Token::Identifier("x")].into_iter());
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Identifier("x")])
+        );
     }
 
     #[test]
@@ -789,24 +844,28 @@ mod tests {
         let mut parser = Parser::from_iter(vec![Token::Number("42")].into_iter());
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Number("42")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Number("42")])
+        );
     }
 
     #[test]
     fn split_expression_simple_addition() {
         let mut parser = Parser::from_iter(
-            vec![
-                Token::Identifier("a"),
-                Token::Plus,
-                Token::Identifier("b"),
-            ]
-            .into_iter(),
+            vec![Token::Identifier("a"), Token::Plus, Token::Identifier("b")].into_iter(),
         );
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Identifier("a")])
+        );
         assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
-        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+        assert_eq!(
+            result[2],
+            ExpressionPart::Operand(vec![Token::Identifier("b")])
+        );
     }
 
     #[test]
@@ -823,11 +882,20 @@ mod tests {
         );
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 5);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Identifier("a")])
+        );
         assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
-        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+        assert_eq!(
+            result[2],
+            ExpressionPart::Operand(vec![Token::Identifier("b")])
+        );
         assert_eq!(result[3], ExpressionPart::Operator(Operator::Star));
-        assert_eq!(result[4], ExpressionPart::Operand(vec![Token::Identifier("c")]));
+        assert_eq!(
+            result[4],
+            ExpressionPart::Operand(vec![Token::Identifier("c")])
+        );
     }
 
     #[test]
@@ -897,9 +965,15 @@ mod tests {
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 5);
         assert_eq!(result[0], ExpressionPart::OpenParen);
-        assert_eq!(result[1], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(
+            result[1],
+            ExpressionPart::Operand(vec![Token::Identifier("a")])
+        );
         assert_eq!(result[2], ExpressionPart::Operator(Operator::Plus));
-        assert_eq!(result[3], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+        assert_eq!(
+            result[3],
+            ExpressionPart::Operand(vec![Token::Identifier("b")])
+        );
         assert_eq!(result[4], ExpressionPart::CloseParen);
     }
 
@@ -918,7 +992,10 @@ mod tests {
         );
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Identifier("x")])
+        );
         assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
         assert_eq!(
             result[2],
@@ -947,7 +1024,10 @@ mod tests {
         assert_eq!(result.len(), 5);
         assert_eq!(result[0], ExpressionPart::OpenParen);
         assert_eq!(result[1], ExpressionPart::OpenParen);
-        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(
+            result[2],
+            ExpressionPart::Operand(vec![Token::Identifier("a")])
+        );
         assert_eq!(result[3], ExpressionPart::CloseParen);
         assert_eq!(result[4], ExpressionPart::CloseParen);
     }
@@ -955,16 +1035,14 @@ mod tests {
     #[test]
     fn split_expression_subtraction() {
         let mut parser = Parser::from_iter(
-            vec![
-                Token::Number("10"),
-                Token::Minus,
-                Token::Number("5"),
-            ]
-            .into_iter(),
+            vec![Token::Number("10"), Token::Minus, Token::Number("5")].into_iter(),
         );
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Number("10")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Number("10")])
+        );
         assert_eq!(result[1], ExpressionPart::Operator(Operator::Minus));
         assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Number("5")]));
     }
@@ -972,16 +1050,14 @@ mod tests {
     #[test]
     fn split_expression_division() {
         let mut parser = Parser::from_iter(
-            vec![
-                Token::Identifier("x"),
-                Token::Slash,
-                Token::Number("2"),
-            ]
-            .into_iter(),
+            vec![Token::Identifier("x"), Token::Slash, Token::Number("2")].into_iter(),
         );
         let result = ExpressionPart::split_expression(&mut parser).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![Token::Identifier("x")])
+        );
         assert_eq!(result[1], ExpressionPart::Operator(Operator::Slash));
         assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Number("2")]));
     }
