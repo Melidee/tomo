@@ -1,9 +1,10 @@
 use peeking_take_while::PeekableExt;
-use std::iter::Peekable;
+use std::{iter::Peekable, process::ExitCode};
 
 use crate::{
     error::{Error, Result},
     lexer::Token,
+    parser::ExpressionPart::Operand,
 };
 
 pub struct Parser<'a> {
@@ -40,7 +41,9 @@ impl<'a> Parser<'a> {
     ///
     /// ### Examples
     ///
-    /// ```rs
+    /// ```
+    /// use tomo::{lexer::Token, error::Error, parser::Parser};
+    ///
     /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
     ///
     /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
@@ -72,7 +75,9 @@ impl<'a> Parser<'a> {
     ///
     /// ### Examples
     ///
-    /// ```rs
+    /// ```
+    /// use tomo::{lexer::Token, error::Error, parser::Parser};
+    ///
     /// let mut parser = Parser::from_iter(vec![Token::OpenParen, Token::CloseParen].into_iter());
     ///
     /// assert_eq!(parser.expect_symbol(Token::OpenParen).unwrap(), ());
@@ -81,7 +86,7 @@ impl<'a> Parser<'a> {
     ///     Error::UnexpectedToken(Token::Comma.to_string(), Token::CloseParen.to_string())
     /// );
     /// ```
-    fn expect_identifier(&mut self) -> Result<Identifier<'a>> {
+    pub fn expect_identifier(&mut self) -> Result<Identifier<'a>> {
         match self.next_expect()? {
             Token::Identifier(id) => Ok(Identifier(id)),
             found => Err(Error::UnexpectedToken(
@@ -96,7 +101,9 @@ impl<'a> Parser<'a> {
     ///
     /// ### Examples
     ///
-    /// ```rs
+    /// ```
+    /// use tomo::{lexer::Token, error::Error, parser::Parser};
+    ///
     /// let mut parser = Parser::from_iter(vec![
     ///     Token::Identifier("x"),
     ///     Token::Plus,
@@ -115,7 +122,7 @@ impl<'a> Parser<'a> {
     /// parser.expect_symbol(Token::Semicolon).expect("next is semicolon");
     /// parser.expect_identifier().expect("next is identifier");
     /// ```
-    fn collect_until(&mut self, token: Token<'a>) -> Parser<'a> {
+    pub fn collect_until(&mut self, token: Token<'a>) -> Parser<'a> {
         let collected = self
             .tokens
             .by_ref()
@@ -265,7 +272,7 @@ impl<'a> DefArg<'a> {
             let mut arg_tokens = args_tokens.collect_until(Token::Comma);
             args.push(Self::parse(&mut arg_tokens));
         }
-        parser.expect_symbol(Token::CloseParen);
+        parser.expect_symbol(Token::CloseParen)?;
         args.into_iter().collect() // Vec<Result<T>> -> Result<Vec<T>>
     }
 
@@ -340,10 +347,16 @@ pub enum Expression<'a> {
     StringLiteral(&'a str),
     IntegerLiteral(u64),
     FloatLiteral(f64),
+    Prefix(Operator, Box<Expression<'a>>),
+    Infix(Operator, Box<Expression<'a>>),
 }
 
 impl<'a> Expression<'a> {
     fn parse(parser: &mut Parser<'a>) -> Result<Self> {
+        let mut tokens = vec![];
+        while let Some(token) = parser.tokens.next() {
+            tokens.push(token);
+        }
         match parser.peek_expect()? {
             Token::Identifier(_) => {
                 let id = parser.expect_identifier()?;
@@ -359,6 +372,11 @@ impl<'a> Expression<'a> {
         }
     }
 
+    fn parse_operators(tokens: &[Token<'a>]) -> Result<Self> {
+        tokens.split(|t| matches!(t, Token::Plus | Token::Minus | Token::Star | Token::Slash));
+        todo!()
+    }
+
     fn parse_call(parser: &mut Parser<'a>) -> Result<Self> {
         todo!()
     }
@@ -370,6 +388,94 @@ impl<'a> Expression<'a> {
         } else {
             let int = num.parse::<u64>()?;
             Ok(Self::IntegerLiteral(int))
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ExpressionPart<'a> {
+    OpenParen,
+    CloseParen,
+    Operator(Operator),
+    Operand(Vec<Token<'a>>),
+}
+
+impl<'a> ExpressionPart<'a> {
+    fn split_expression(expr_parser: &mut Parser<'a>) -> Result<Vec<Self>> {
+        let mut parts = vec![];
+        while let Some(token) = expr_parser.tokens.peek() {
+            // check if the last token of the last expression part is an identifier
+            let last_is_id = matches!(
+                parts.last(),
+                Some(ExpressionPart::Operand(tokens))
+                    if matches!(tokens.last(), Some(Token::Identifier(_)))
+            );
+            match token {
+                // if the opening paren is the args to a function or method call
+                Token::OpenParen if last_is_id => {
+                    expr_parser.tokens.next(); // consume openparen
+                    let mut args_tokens = expr_parser
+                        .collect_until_closing(Token::CloseParen)
+                        .tokens
+                        .collect::<Vec<Token>>();
+                    expr_parser.tokens.next(); // consume closeparen
+                    args_tokens.insert(0, Token::OpenParen);
+                    args_tokens.push(Token::CloseParen);
+                    if let Some(ExpressionPart::Operand(last_part)) = parts.last_mut() {
+                        last_part.extend(args_tokens);
+                    }
+                }
+                Token::OpenParen | Token::CloseParen => {
+                    parts.push(match token {
+                        Token::OpenParen => Self::OpenParen,
+                        Token::CloseParen => Self::CloseParen,
+                        _ => unreachable!(),
+                    });
+                    expr_parser.tokens.next(); // consume paren token
+                }
+                _ if Operator::from_token(token).is_ok() => {
+                    let operator = Operator::from_token(token)?;
+                    parts.push(Self::Operator(operator));
+                    expr_parser.tokens.next(); // consume operator token
+                }
+                _ => {
+                    let operand_tokens = expr_parser
+                        .tokens
+                        .by_ref()
+                        .peeking_take_while(|t| {
+                            Operator::from_token(t).is_err()
+                                && !matches!(t, Token::OpenParen | Token::CloseParen)
+                        })
+                        .collect::<Vec<Token>>();
+                    parts.push(Self::Operand(operand_tokens));
+                }
+            }
+        }
+        Ok(parts)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Operator {
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    DoubleEqual,
+    GreaterThan,
+    GreaterThanEqual,
+    LessThan,
+    LessThanEqual,
+}
+
+impl Operator {
+    fn from_token<'a>(token: &Token<'a>) -> Result<Self> {
+        match token {
+            Token::Plus => Ok(Self::Plus),
+            Token::Minus => Ok(Self::Minus),
+            Token::Star => Ok(Self::Star),
+            Token::Slash => Ok(Self::Slash),
+            other => Err(Error::unexpected("operator", other.to_string())),
         }
     }
 }
@@ -661,5 +767,244 @@ mod tests {
         });
         let result = Function::parse(&mut parser);
         assert_eq!(expected, result)
+    }
+
+    #[test]
+    fn split_expression_empty() {
+        let mut parser = Parser::from_iter(vec![].into_iter());
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn split_expression_single_identifier() {
+        let mut parser = Parser::from_iter(vec![Token::Identifier("x")].into_iter());
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+    }
+
+    #[test]
+    fn split_expression_single_number() {
+        let mut parser = Parser::from_iter(vec![Token::Number("42")].into_iter());
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Number("42")]));
+    }
+
+    #[test]
+    fn split_expression_simple_addition() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("a"),
+                Token::Plus,
+                Token::Identifier("b"),
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
+        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+    }
+
+    #[test]
+    fn split_expression_multiple_operators() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("a"),
+                Token::Plus,
+                Token::Identifier("b"),
+                Token::Star,
+                Token::Identifier("c"),
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
+        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+        assert_eq!(result[3], ExpressionPart::Operator(Operator::Star));
+        assert_eq!(result[4], ExpressionPart::Operand(vec![Token::Identifier("c")]));
+    }
+
+    #[test]
+    fn split_expression_function_call() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("foo"),
+                Token::OpenParen,
+                Token::Identifier("x"),
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![
+                Token::Identifier("foo"),
+                Token::OpenParen,
+                Token::Identifier("x"),
+                Token::CloseParen,
+            ])
+        );
+    }
+
+    #[test]
+    fn split_expression_function_call_with_multiple_args() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("add"),
+                Token::OpenParen,
+                Token::Identifier("a"),
+                Token::Comma,
+                Token::Identifier("b"),
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        println!("{:#?}", result);
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![
+                Token::Identifier("add"),
+                Token::OpenParen,
+                Token::Identifier("a"),
+                Token::Comma,
+                Token::Identifier("b"),
+                Token::CloseParen,
+            ])
+        );
+    }
+
+    #[test]
+    fn split_expression_parenthesized_group() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::OpenParen,
+                Token::Identifier("a"),
+                Token::Plus,
+                Token::Identifier("b"),
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], ExpressionPart::OpenParen);
+        assert_eq!(result[1], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(result[2], ExpressionPart::Operator(Operator::Plus));
+        assert_eq!(result[3], ExpressionPart::Operand(vec![Token::Identifier("b")]));
+        assert_eq!(result[4], ExpressionPart::CloseParen);
+    }
+
+    #[test]
+    fn split_expression_call_with_operators_around() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("x"),
+                Token::Plus,
+                Token::Identifier("foo"),
+                Token::OpenParen,
+                Token::Number("1"),
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+        assert_eq!(result[1], ExpressionPart::Operator(Operator::Plus));
+        assert_eq!(
+            result[2],
+            ExpressionPart::Operand(vec![
+                Token::Identifier("foo"),
+                Token::OpenParen,
+                Token::Number("1"),
+                Token::CloseParen,
+            ])
+        );
+    }
+
+    #[test]
+    fn split_expression_nested_parens() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::OpenParen,
+                Token::OpenParen,
+                Token::Identifier("a"),
+                Token::CloseParen,
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], ExpressionPart::OpenParen);
+        assert_eq!(result[1], ExpressionPart::OpenParen);
+        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Identifier("a")]));
+        assert_eq!(result[3], ExpressionPart::CloseParen);
+        assert_eq!(result[4], ExpressionPart::CloseParen);
+    }
+
+    #[test]
+    fn split_expression_subtraction() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Number("10"),
+                Token::Minus,
+                Token::Number("5"),
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Number("10")]));
+        assert_eq!(result[1], ExpressionPart::Operator(Operator::Minus));
+        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Number("5")]));
+    }
+
+    #[test]
+    fn split_expression_division() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("x"),
+                Token::Slash,
+                Token::Number("2"),
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], ExpressionPart::Operand(vec![Token::Identifier("x")]));
+        assert_eq!(result[1], ExpressionPart::Operator(Operator::Slash));
+        assert_eq!(result[2], ExpressionPart::Operand(vec![Token::Number("2")]));
+    }
+
+    #[test]
+    fn split_expression_chained_calls() {
+        let mut parser = Parser::from_iter(
+            vec![
+                Token::Identifier("obj.method"),
+                Token::OpenParen,
+                Token::CloseParen,
+            ]
+            .into_iter(),
+        );
+        let result = ExpressionPart::split_expression(&mut parser).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            ExpressionPart::Operand(vec![
+                Token::Identifier("obj.method"),
+                Token::OpenParen,
+                Token::CloseParen,
+            ])
+        );
     }
 }

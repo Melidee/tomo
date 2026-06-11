@@ -1,11 +1,7 @@
 use std::{env, fs::read_to_string};
 
-use crate::{error::Error, lexer::{Lexer, Token}, parser::{Parser, TopLevelAst}};
+use tomo::{error::Error, lexer::{Lexer, Token}, parser::{Parser, TopLevelAst}};
 
-mod lexer;
-mod parser;
-mod qbe;
-mod error;
 
 fn main() {
     let source_file = env::args()
